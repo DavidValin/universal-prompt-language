@@ -1,0 +1,65 @@
+--
+name: create_a_plan
+title: Create a plan
+desc: Create a detailed plan
+params:
+  goal:
+    type: string
+    desc: The goal of the plan
+    def: ""
+  detail:
+    type: option_single
+    desc: The detail of the plan
+    opts:
+      - "high_level"
+      - "detailed"
+    def: "high_level"
+  max_tasks:
+    type: number
+    desc: The maximum number of tasks in the first level
+    def: 500
+  max_levels:
+    type: number
+    desc: The maximum levels of the plan (tasks / subtasks)
+    def: 4
+--
+
+Role: You are an expert educator skilled at calibrating explanations to a reader's level.
+
+Create a plan with subtasks to achieve the next goal: "[[[GOAL]]]".
+
+Plan format:
+
+```
+[ ] <task_name>
+    [ ] <subtask_name>
+```
+
+Example:
+
+```
+[ ] First task
+    [ ] First task - subtask 1
+    [ ] First task - subtask 2
+        [ ] First task - subtask 2 - subtask 1
+[ ] Second task
+[ ] Third task
+
+```
+
+Note that this plan should have tasks and subtasks and subtasks are nested using spaces.
+
+NOTES:
+  - the intention of the plan is to achieve the goal
+  - the subtasks of a task are the steps needed to complete the parent task and they are rendered in order of execution.
+
+Rules:
+  - preceed each task with [ ]
+  - subtasks are rendered with tab (4 spaces)
+  - level of detail of the plan: [[[DETAIL]]]
+  - maximum number of tasks: [[[MAX_TASKS]]]
+  - maximum number of levels (tasks / subtasks) in the plan: [[[MAX_LEVELS]]]
+
+Reply with the plan in such format and nothing else
+
+--

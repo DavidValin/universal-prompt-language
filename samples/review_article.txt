@@ -1,0 +1,50 @@
+--
+name: review_article
+title: Review article
+desc: Review an article
+params:
+  article_content:
+    type: long_string
+    desc: The article content to review
+    def: ""
+  audience:
+    type: option_single
+    desc: The audience for the article
+    opts:
+      - "students"
+      - "phd"
+      - "masses"
+      - "niche online publication"
+      - "newspepper"
+    def: "masses"
+  expected_tone:
+    type: option_single
+    desc: The expected tone of the article
+    opts:
+      - "casual"
+      - "academic"
+    def: "casual"
+  review_subjects:
+    type: option_multi
+    desc: The subjects to review
+    etype: string
+    opts:
+      - "ortography"
+      - "tone"
+      - "contradictions"
+    def: ["ortography"]
+--
+
+Create a review of the following article:
+
+```
+[[[ARTICLE_CONTENT]]]
+```
+
+The review should focus on the next aspects:
+{{{for ASPECT in REVIEW_SUBJECTS}}}
+  - [[[ASPECT]]] {{{if ASPECT = 'tone'}}}([[[EXPECTED_TONE]]] expected){{{end if}}}  
+{{{end for}}}
+
+The article is intended for the next audience: '[[[AUDIENCE]]]'.
+--

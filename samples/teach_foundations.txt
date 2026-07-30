@@ -1,0 +1,109 @@
+--
+name: teach_foundations
+title: Teach the Foundations of a Subject for a Specific Level
+desc: Build a structured foundational lesson for a subject, calibrated to a learner's level and time budget.
+params:
+  subject:
+    type: string
+    desc: The subject to teach the foundations of
+    def: "calculus"
+  level:
+    type: option_single
+    desc: Education level of the learner
+    opts:
+      - "elementary"
+      - "middle_school"
+      - "high_school"
+      - "undergraduate"
+      - "graduate"
+    def: "high_school"
+  format:
+    type: option_single
+    desc: Delivery format of the lesson
+    opts:
+      - "lecture"
+      - "interactive"
+      - "slides"
+      - "notes"
+    def: "notes"
+  duration_minutes:
+    type: number
+    desc: Total lesson duration in minutes
+    def: 45
+  include_exercises:
+    type: boolean
+    desc: Whether to include practice exercises
+    def: true
+  include_summary:
+    type: boolean
+    desc: Whether to include a recap at the end
+    def: true
+  learning_goals:
+    type: list
+    desc: Specific learning goals the lesson must achieve
+    etype: string
+    def:
+      - "Define the core vocabulary of the subject"
+      - "Explain why the subject exists and what problem it solves"
+  materials:
+    type: object
+    desc: Materials the learner has available
+    ofields:
+      has_calculator:
+        type: boolean
+        def: true
+      has_internet:
+        type: boolean
+        def: true
+      preferred_language:
+        type: string
+        desc: Natural language for the lesson
+        def: "English"
+--
+Role: You are a patient curriculum designer who builds foundational lessons that scale to the learner.
+
+Design a foundational lesson on "[[[SUBJECT]]]" for a [[[LEVEL]]] learner.
+
+Delivery format: [[[FORMAT]]].
+Total time budget: [[[DURATION_MINUTES]]] minutes.
+Language: [[[MATERIALS.PREFERRED_LANGUAGE]]].
+
+The lesson MUST achieve these learning goals, in order:
+{{{for GOAL in LEARNING_GOALS}}}
+- [[[GOAL]]]
+{{{end for}}}
+
+Calibrate the depth and vocabulary to a [[[LEVEL]]] learner:
+{{{LEVEL = "elementary" ? "Use simple words, short sentences, and everyday analogies. Avoid jargon." : ""}}}{{{LEVEL = "middle_school" ? "Introduce key terms but define each one the first time it appears." : ""}}}{{{LEVEL = "high_school" ? "Use proper terminology and show worked examples step by step." : ""}}}{{{LEVEL = "undergraduate" ? "Use formal definitions, notation, and cite the assumptions behind each step." : ""}}}{{{LEVEL = "graduate" ? "Assume mathematical maturity; focus on generality, edge cases, and connections to other fields." : ""}}}
+
+Structure the lesson as:
+1. Hook (2-3 sentences): why [[[SUBJECT]]] is worth learning for a [[[LEVEL]]] learner.
+2. Core ideas: build up the foundations one concept at a time, each followed by a one-line check for understanding.
+
+{{{if FORMAT = "interactive"}}}
+After each concept, include a question you would ask the learner to check understanding, plus the answer you expect.
+{{{end if}}}
+{{{if FORMAT = "slides"}}}
+Split the lesson into slide-sized chunks and give each slide a title.
+{{{end if}}}
+
+{{{if MATERIALS.HAS_CALCULATOR}}}
+Note: the learner has a calculator available, so exercises may require numeric computation.
+{{{end if}}}
+{{{if !MATERIALS.HAS_INTERNET}}}
+Do not require the learner to look anything up online; make the lesson self-contained.
+{{{end if}}}
+
+{{{if INCLUDE_EXERCISES}}}
+Include 3 practice exercises that increase in difficulty. For each:
+- The exercise statement.
+- A hint (one sentence).
+- The worked solution.
+{{{end if}}}
+
+{{{if INCLUDE_SUMMARY}}}
+End with a 5-bullet recap titled "What you should remember" and a single transfer question that asks the learner to apply [[[SUBJECT]]] to a new situation.
+{{{end if}}}
+
+Keep the whole lesson deliverable within [[[DURATION_MINUTES]]] minutes.
+--

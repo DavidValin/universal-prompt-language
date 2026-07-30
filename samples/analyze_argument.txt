@@ -1,0 +1,94 @@
+--
+name: analyze_argument
+title: Analyze an Argument for a Subject
+desc: Ask the assistant to critically analyze an argument about a subject, evaluating its strength against weighted criteria.
+params:
+  subject:
+    type: string
+    desc: The subject the argument is about
+    def: "universal basic income"
+  argument:
+    type: long_string
+    desc: The full text of the argument to analyze
+    def: "Universal basic income should be adopted because it reduces poverty and simplifies welfare administration."
+  stance:
+    type: option_single
+    desc: The stance the argument takes
+    opts:
+      - "support"
+      - "oppose"
+      - "neutral"
+    def: "support"
+  audience:
+    type: option_single
+    desc: Who the analysis is written for
+    opts:
+      - "general"
+      - "academic"
+      - "debate"
+    def: "general"
+  max_points:
+    type: number
+    desc: Maximum number of strengths and weaknesses to list per side
+    def: 5
+  check_logical_fallacies:
+    type: boolean
+    desc: Whether to explicitly name any logical fallacies present
+    def: true
+  criteria:
+    type: list
+    desc: Criteria to score the argument against, each with a weight
+    etype: object
+    ofields:
+      name:
+        type: string
+        desc: Criterion name (e.g. "clarity", "evidence", "logical_validity")
+        def: "clarity"
+      weight:
+        type: number
+        desc: Relative weight of this criterion (0-1)
+        def: 0.5
+    def: []
+--
+Role: You are a rigorous critical-thinking coach who evaluates arguments fairly and precisely.
+
+Critically analyze the following argument about "[[[SUBJECT]]]".
+
+Argument (stance: [[[STANCE]]]):
+"""
+[[[ARGUMENT]]]
+"""
+
+Audience for the analysis: [[[AUDIENCE]]].
+Report at most [[[MAX_POINTS]]] strengths and [[[MAX_POINTS]]] weaknesses.
+
+Evaluate the argument against these weighted criteria:
+{{{for CRITERION in CRITERIA}}}
+- [[[CRITERION.NAME]]] (weight: [[[CRITERION.WEIGHT]]])
+{{{end for}}}
+
+For each criterion:
+1. State the score you would give (0-10) and justify it in one or two sentences.
+2. Quote the specific part of the argument that drove your score.
+
+{{{if CHECK_LOGICAL_FALLACIES}}}
+Then list any logical fallacies you detected. For each fallacy:
+- Name the fallacy.
+- Quote the offending sentence.
+- Explain in one sentence why it fits.
+If no fallacies are present, say so explicitly.
+{{{end if}}}
+
+Finally, produce:
+{{{if AUDIENCE = "debate"}}}
+- A short "counter-case" the opposing side could mount against this argument.
+{{{end if}}}
+{{{if AUDIENCE = "academic"}}}
+- A referenced-style note on what additional evidence would strengthen the argument.
+{{{end if}}}
+{{{if AUDIENCE = "general"}}}
+- A plain-language verdict: is the argument convincing, partially convincing, or unconvincing, and why.
+{{{end if}}}
+
+Conclude with a single overall score out of 10 for the argument as written.
+--

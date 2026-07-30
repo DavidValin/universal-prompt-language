@@ -1,0 +1,99 @@
+--
+name: explain_subject
+title: Explain a Subject at a Given Level
+desc: Ask the assistant to explain any subject for a specific audience, with optional examples, analogies, and focus areas.
+params:
+  subject:
+    type: string
+    desc: The subject to explain
+    def: "recursion"
+  audience_level:
+    type: option_single
+    desc: Expertise level of the intended reader
+    opts:
+      - "beginner"
+      - "intermediate"
+      - "advanced"
+      - "expert"
+    def: "beginner"
+  max_words:
+    type: number
+    desc: Approximate upper bound on the explanation length
+    def: 500
+  tone:
+    type: option_single
+    desc: Desired tone of the explanation
+    opts:
+      - "academic"
+      - "casual"
+      - "neutral"
+    def: "neutral"
+  include_examples:
+    type: boolean
+    desc: Whether to include concrete examples
+    def: true
+  include_analogy:
+    type: boolean
+    desc: Whether to include an analogy to anchor intuition
+    def: true
+  prerequisites:
+    type: list
+    desc: Concepts the reader is assumed to already know
+    etype: string
+    def: []
+  focus_areas:
+    type: option_multi
+    desc: Aspects to cover in the explanation
+    etype: string
+    opts:
+      - "definitions"
+      - "history"
+      - "applications"
+      - "common_pitfalls"
+      - "further_reading"
+    def:
+      - "definitions"
+      - "applications"
+      - "common_pitfalls"
+--
+Role: You are an expert educator skilled at calibrating explanations to a reader's level.
+
+Explain the subject "[[[SUBJECT]]]" for a [[[AUDIENCE_LEVEL]]] reader.
+
+Constraints:
+- Keep the explanation under roughly [[[MAX_WORDS]]] words.
+- Tone: {{{TONE = "academic" ? "academic and precise" : ""}}}{{{TONE = "casual" ? "casual and friendly" : ""}}}{{{TONE = "neutral" ? "neutral and clear" : ""}}}.
+- Audience level: [[[AUDIENCE_LEVEL]]].
+
+Prerequisites the reader is assumed to already understand (if any):
+{{{for PREREQ in PREREQUISITES}}}
+- [[[PREREQ]]]
+{{{end for}}}
+
+Please cover the following aspects, in this order:
+{{{if [[[FOCUS_AREAS]]] contains "definitions"}}}
+1. A clear, concise definition of [[[SUBJECT]]].
+{{{end if}}}
+{{{if [[[FOCUS_AREAS]]] contains "history"}}}
+2. A brief history of how [[[SUBJECT]]] emerged and why it matters.
+{{{end if}}}
+{{{if [[[FOCUS_AREAS]]] contains "applications"}}}
+3. Real-world applications of [[[SUBJECT]]].
+{{{end if}}}
+{{{if [[[FOCUS_AREAS]]] contains "common_pitfalls"}}}
+4. Common pitfalls and misconceptions to avoid.
+{{{end if}}}
+{{{if [[[FOCUS_AREAS]]] contains "further_reading"}}}
+5. Suggestions for further reading, ordered from introductory to advanced.
+{{{end if}}}
+
+{{{if INCLUDE_ANALOGY}}}
+Include at least one analogy that helps a [[[AUDIENCE_LEVEL]]] reader build intuition.
+{{{end if}}}
+
+{{{if INCLUDE_EXAMPLES}}}
+Include at least two concrete examples illustrating [[[SUBJECT]]] in practice.
+{{{end if}}}
+
+End with a one-paragraph summary that a [[[AUDIENCE_LEVEL]]] reader could repeat back from memory.
+--

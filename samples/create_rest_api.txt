@@ -1,0 +1,124 @@
+--
+name: create_rest_api
+title: Create a REST API
+desc: Define a flat REST API (plural resource names, /<resource> and /<resource>/:id endpoints) and print a human-readable specification usable to generate the API in Ruby or Node.js
+params:
+  language:
+    type: option_single
+    desc: Target implementation language for the generated REST API
+    opts:
+      - "ruby"
+      - "node.js"
+    def: "node.js"
+  api_name:
+    type: string
+    desc: Name of the REST API
+    def: "My API"
+  api_version:
+    type: string
+    desc: Version of the REST API
+    def: "v1"
+  resources:
+    type: list
+    desc: The flat list of resources (plural names) exposed by the API
+    etype: resource
+    def:
+      - { name: "users", actions: ["POST", "GET", "PUT", "PATCH", "DELETE"], fields: [{ name: "id", type: "string", required: true }, { name: "email", type: "string", required: true }, { name: "name", type: "string", required: false }, { name: "age", type: "number", required: false }, { name: "active", type: "boolean", required: false }] }
+      - { name: "posts", actions: ["POST", "GET", "PUT", "DELETE"], fields: [{ name: "id", type: "string", required: true }, { name: "user_id", type: "string", required: true }, { name: "title", type: "string", required: true }, { name: "body", type: "long_string", required: false }] }
+  resource:
+    type: object
+    desc: A REST resource exposed by the API (plural name)
+    ofields:
+      name:
+        type: string
+        desc: Plural name of the resource (e.g. "users", "posts")
+        def: "users"
+      actions:
+        type: option_multi
+        desc: HTTP verbs available for this resource
+        etype: string
+        opts:
+          - "POST"
+          - "GET"
+          - "PUT"
+          - "PATCH"
+          - "DELETE"
+        def: ["POST", "GET"]
+      fields:
+        type: list
+        desc: Fields of the resource
+        etype: field
+        def:
+          - { name: "id", type: "string", required: true }
+  field:
+    type: object
+    desc: A field of a resource
+    ofields:
+      name:
+        type: string
+        desc: Field name
+        def: "id"
+      type:
+        type: option_single
+        desc: Field data type
+        opts:
+          - "string"
+          - "long_string"
+          - "number"
+          - "boolean"
+        def: "string"
+      required:
+        type: boolean
+        desc: Whether the field is required
+        def: false
+--
+
+Role: You are a senior backend architect designing REST APIs.
+
+Below is a specification for a REST API named "[[[API_NAME]]]" (version [[[API_VERSION]]]).
+The API is organized as a FLAT list of endpoints: resource names are plural and there is no
+resource nesting. The endpoint conventions are:
+
+  - POST   /<resource>            -> create a new item
+  - GET    /<resource>            -> list all items
+  - GET    /<resource>/:id        -> retrieve one item
+  - PUT    /<resource>/:id        -> replace one item
+  - PATCH  /<resource>/:id        -> partially update one item
+  - DELETE /<resource>/:id        -> delete one item
+
+The API must be implemented in [[[LANGUAGE]]].
+
+Resources:
+{{{for RESOURCE in RESOURCES}}}
+  - Resource: [[[RESOURCE.NAME]]]
+    Available actions: [[[RESOURCE.ACTIONS]]]
+    Fields:
+{{{for FIELD in RESOURCE.FIELDS}}}
+      - [[[FIELD.NAME]]] (type: [[[FIELD.TYPE]]], required: [[[FIELD.REQUIRED]]])
+{{{end for}}}
+    Endpoints:
+{{{if RESOURCE.ACTIONS contains "POST"}}}      POST   /[[[RESOURCE.NAME]]]
+{{{end if}}}
+{{{if RESOURCE.ACTIONS contains "GET"}}}      GET    /[[[RESOURCE.NAME]]]
+      GET    /[[[RESOURCE.NAME]]]/:id
+{{{end if}}}
+{{{if RESOURCE.ACTIONS contains "PUT"}}}      PUT    /[[[RESOURCE.NAME]]]/:id
+{{{end if}}}
+{{{if RESOURCE.ACTIONS contains "PATCH"}}}      PATCH  /[[[RESOURCE.NAME]]]/:id
+{{{end if}}}
+{{{if RESOURCE.ACTIONS contains "DELETE"}}}      DELETE /[[[RESOURCE.NAME]]]/:id
+{{{end if}}}
+{{{end for}}}
+
+Using the specification above, generate a complete, runnable [[[LANGUAGE]]] REST API that
+implements every listed endpoint for every resource. The implementation must:
+
+  - Use the standard [[[LANGUAGE]]] web framework and idiomatic project layout.
+  - Validate input fields according to the `required` and `type` declared for each resource.
+  - Return appropriate HTTP status codes and JSON responses.
+  - Use an in-memory store (no external database) so the API can be run standalone.
+  - Include a short README explaining how to install dependencies and run the server.
+
+Print the full, human-readable API specification first, then produce the [[[LANGUAGE]]]
+source code that satisfies it.
+--
