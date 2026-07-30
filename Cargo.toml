@@ -2,7 +2,7 @@
 name = "upl"
 version = "0.1.0-rc.1"
 edition = "2021"
-keywords = ["prompt", "prompts", "library", "dynamic", "language", "variables", "llm", "ai", "llms", "cli", "universal-prompt-language", "repository"]
+keywords = ["prompts", "dynamic", "llm", "ai", "library"]
 
 authors = ["David Valin <hola@davidvalin.com>"]
 homepage = "https://github.com/DavidValin/upl"
