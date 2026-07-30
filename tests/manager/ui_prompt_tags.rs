@@ -1,6 +1,6 @@
 // Unit tests for the per-prompt tags TUI helpers.
 
-use upl::manager::ui_prompt_tags::input_focus_has_text;
+use universal_prompt_language::manager::ui_prompt_tags::input_focus_has_text;
 
 #[test]
 fn input_focus_helper() {

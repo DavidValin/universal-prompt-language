@@ -1,5 +1,5 @@
 [package]
-name = "upl"
+name = "universal-prompt-language"
 version = "0.1.0-rc.1"
 edition = "2021"
 keywords = ["prompts", "dynamic", "llm", "ai", "library"]
@@ -27,3 +27,7 @@ rustls-pemfile = "2"
 hex = "0.4"
 
 [dev-dependencies]
+
+[[bin]]
+name = "upl"
+path = "src/main.rs"

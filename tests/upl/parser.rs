@@ -1,7 +1,7 @@
 // Unit tests for the UPL prompt parser: header/params/body parsing, element
 // reference resolution, and template-body validation.
 
-use upl::upl::parser::{PromptParseError, PromptParser, Template, VariableType};
+use universal_prompt_language::upl::parser::{PromptParseError, PromptParser, Template, VariableType};
 
 #[test]
 fn test_parse_simple_prompt() {
@@ -177,7 +177,7 @@ POST [[[URL]]]
     let prompt = PromptParser::parse(content).expect("should parse");
     let val = prompt.variable_defaults.get("body").expect("body has default");
     match val {
-        upl::upl::parser::VariableValue::LongString(s) | upl::upl::parser::VariableValue::String(s) => {
+        universal_prompt_language::upl::parser::VariableValue::LongString(s) | universal_prompt_language::upl::parser::VariableValue::String(s) => {
             assert_eq!(s, "{\n  \"name\": \"example\",\n  \"active\": true\n}");
         }
         other => panic!("unexpected value kind: {other:?}"),
@@ -201,7 +201,7 @@ plain line
     let prompt = PromptParser::parse(content).expect("should parse");
     let val = prompt.variable_defaults.get("note").unwrap();
     match val {
-        upl::upl::parser::VariableValue::LongString(s) | upl::upl::parser::VariableValue::String(s) => {
+        universal_prompt_language::upl::parser::VariableValue::LongString(s) | universal_prompt_language::upl::parser::VariableValue::String(s) => {
             assert_eq!(s, "    indented line\nplain line");
         }
         other => panic!("unexpected value kind: {other:?}"),
@@ -214,7 +214,7 @@ fn test_heredoc_terminator_can_be_indented() {
     let prompt = PromptParser::parse(content).expect("should parse");
     let val = prompt.variable_defaults.get("note").unwrap();
     match val {
-        upl::upl::parser::VariableValue::LongString(s) | upl::upl::parser::VariableValue::String(s) => {
+        universal_prompt_language::upl::parser::VariableValue::LongString(s) | universal_prompt_language::upl::parser::VariableValue::String(s) => {
             assert_eq!(s, "hello");
         }
         other => panic!("unexpected value kind: {other:?}"),
@@ -714,7 +714,7 @@ fn test_name_unicode_uppercase_is_error() {
     assert!(matches!(res, Err(PromptParseError::InvalidName { .. })));
 }
 
-use upl::upl::parser::{has_valid_extension, prompt_file_base_name, validate_prompt_file};
+use universal_prompt_language::upl::parser::{has_valid_extension, prompt_file_base_name, validate_prompt_file};
 use std::path::Path;
 
 #[test]

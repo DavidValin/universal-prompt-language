@@ -6,10 +6,10 @@
 // upl-spec/upl-1.0-rfc.md §4: placeholders, ternaries, for-loops and if-blocks, plus
 // the operators in §5.
 
-use upl::upl::builder::{PromptBuilder, ValueMap};
-use upl::upl::parser::{ObjectMap, PromptParser, PromptParseError, VariableValue};
+use universal_prompt_language::upl::builder::{PromptBuilder, ValueMap};
+use universal_prompt_language::upl::parser::{ObjectMap, PromptParser, PromptParseError, VariableValue};
 
-fn parse(upl: &str) -> upl::upl::parser::Prompt {
+fn parse(upl: &str) -> universal_prompt_language::upl::parser::Prompt {
     PromptParser::parse(upl).expect("UPL should parse")
 }
 
@@ -271,7 +271,7 @@ Hi [[[NAME]]]
 ";
     let prompt = parse(upl);
     let res = PromptBuilder::new(prompt).render(&ValueMap::new());
-    assert!(matches!(res, Err(upl::upl::builder::BuilderError::MissingValue(_))));
+    assert!(matches!(res, Err(universal_prompt_language::upl::builder::BuilderError::MissingValue(_))));
 }
 
 #[test]
@@ -293,7 +293,7 @@ params:
         ("n", VariableValue::Number(1.0)),
         ("s", VariableValue::String("a".into())),
     ]));
-    assert!(matches!(res, Err(upl::upl::builder::BuilderError::TypeError(_))));
+    assert!(matches!(res, Err(universal_prompt_language::upl::builder::BuilderError::TypeError(_))));
 }
 
 #[test]
@@ -717,10 +717,10 @@ params:
 x
 --
 ";
-    let res = upl::upl::parser::PromptParser::parse(upl);
+    let res = universal_prompt_language::upl::parser::PromptParser::parse(upl);
     assert!(matches!(
         res,
-        Err(upl::upl::parser::PromptParseError::UnresolvedElementRef { .. })
+        Err(universal_prompt_language::upl::parser::PromptParseError::UnresolvedElementRef { .. })
     ));
 }
 
@@ -740,10 +740,10 @@ params:
 x
 --
 ";
-    let res = upl::upl::parser::PromptParser::parse(upl);
+    let res = universal_prompt_language::upl::parser::PromptParser::parse(upl);
     assert!(matches!(
         res,
-        Err(upl::upl::parser::PromptParseError::CircularElementRef { .. })
+        Err(universal_prompt_language::upl::parser::PromptParseError::CircularElementRef { .. })
     ));
 }
 

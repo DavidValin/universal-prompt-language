@@ -7,8 +7,8 @@
 
 use std::collections::HashMap;
 
-use upl::upl::builder::{PromptBuilder, ValueMap};
-use upl::upl::parser::{ObjectMap, Prompt, Template, VariableDefinitions, VariableValue};
+use universal_prompt_language::upl::builder::{PromptBuilder, ValueMap};
+use universal_prompt_language::upl::parser::{ObjectMap, Prompt, Template, VariableDefinitions, VariableValue};
 
 fn prompt_with(body: &str) -> Prompt {
     let template = Template::parse(body).expect("template body should parse");

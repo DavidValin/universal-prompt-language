@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use upl::manager::ui_prompts_list::{
+use universal_prompt_language::manager::ui_prompts_list::{
     compute_layout, pad, resolve_folder, truncate, INDENT, SEP, TRAILING, W_NAME_MAX,
 };
 

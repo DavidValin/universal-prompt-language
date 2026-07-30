@@ -10,10 +10,10 @@ use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::sync::Once;
 
-use upl::repository::protocol::{
+use universal_prompt_language::repository::protocol::{
     self, Credential, PromptMeta, Request, Response, Visibility, read_msg, write_msg,
 };
-use upl::repository::server;
+use universal_prompt_language::repository::server;
 
 static INIT: Once = Once::new();
 

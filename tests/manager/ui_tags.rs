@@ -1,6 +1,6 @@
 // Unit tests for the tag store and sha256 helper.
 
-use upl::manager::ui_tags::{sha256, TagStore};
+use universal_prompt_language::manager::ui_tags::{sha256, TagStore};
 
 #[test]
 fn sha256_is_stable_and_hex() {

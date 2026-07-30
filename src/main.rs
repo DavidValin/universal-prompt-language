@@ -13,12 +13,12 @@ use crossterm::style::{
 use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
 use inquire::ui::{Color as InquireColor, RenderConfig, StyleSheet};
 
-use upl::upl::builder::PromptBuilder;
-use upl::manager::ui_prompts_list;
-use upl::upl::parser::PromptParser;
-use upl::repository::protocol::Visibility;
-use upl::repository::client;
-use upl::repository::server;
+use universal_prompt_language::upl::builder::PromptBuilder;
+use universal_prompt_language::manager::ui_prompts_list;
+use universal_prompt_language::upl::parser::PromptParser;
+use universal_prompt_language::repository::protocol::Visibility;
+use universal_prompt_language::repository::client;
+use universal_prompt_language::repository::server;
 
 fn read_file(path: &str) -> Result<String, Box<dyn std::error::Error>> {
     let mut file = File::open(path)?;
@@ -108,14 +108,14 @@ fn emit_prompt(rendered: &str) {
 /// `no_input` is set).
 fn build_prompt_file(path: &str, no_input: bool) -> Result<(), Box<dyn std::error::Error>> {
     let p = Path::new(path);
-    if !upl::upl::parser::has_valid_extension(p) {
+    if !universal_prompt_language::upl::parser::has_valid_extension(p) {
         return Err(
             "prompt files must use the '.txt' or '.upl' extension".into(),
         );
     }
     let content = read_file(path)?;
     let prompt = PromptParser::parse(&content)?;
-    upl::upl::parser::validate_prompt_file(&prompt, p)
+    universal_prompt_language::upl::parser::validate_prompt_file(&prompt, p)
         .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
 
     let title = prompt.title.clone().unwrap_or_else(|| path.to_string());
@@ -441,7 +441,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // First-run setup: seed ~/.upl with the bundled sample prompts and
     // tags_db if it does not exist yet.
-    upl::seed::ensure()?;
+    universal_prompt_language::seed::ensure()?;
 
     // No command at all: behave like `build` with no arguments (load the
     // default prompt library from ~/.upl/prompts).
