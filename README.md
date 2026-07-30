@@ -9,8 +9,9 @@ This project contains:
 1. `upl specification`
 2. terminal `prompts browser` with tag support
 3. terminal `prompts builder`, to construct a dynamic prompt interactively by filling in the input variables
-4. UPL `repository server`, to create a centralized repository of upl prompts
-5. UPL `repository client`, to publish/download upl prompts to/from a an upl repository
+4. terminal `prompt editor` with syntax highlight
+5. UPL `repository server`, to create a centralized repository of upl prompts
+6. UPL `repository client`, to publish/download upl prompts to/from a an upl repository
 
 All operations are integrated in a single cli command called `upl`.
 
