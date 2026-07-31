@@ -65,7 +65,7 @@ upl <prompts_folder>
 # or: upl build <prompts_folder>
 ```
 
-## Build a prompt from an upl prompt
+## Build and Run a prompt from an upl prompt
 
 Build a single prompt file directly by filling in its variables interactively
 (no TUI library browsing needed).
@@ -90,6 +90,12 @@ or to browse+build in one go and pass the built prompt:
 
 ```bash
 upl | aichat
+```
+
+If what you want is a voice response from llm, check [vtmate](https://www.github.com/DavidValin/vtmate), example:
+
+```bash
+upl | vtmate -i -
 ```
 
 ### UPL Repository
