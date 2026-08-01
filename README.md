@@ -1,6 +1,6 @@
 # Universal Prompt Language
 
-UPL is a language to define dynamic prompts which contain variables, conditionals and loops. This allows you to dynamically construct complex prompts, [see the language specification](upl-spec/upl-1.0-rfc.pdf). UPL files are just `.txt` or `.upl` files, see examples at `samples/` directory.
+UPL is a language to define dynamic prompts which contain variables, conditionals and loops. This allows you to dynamically construct complex prompts, [see the language specification](upl-spec/upl-1.0-rfc.md). UPL files are just `.txt` or `.upl` files, see examples at `samples/` directory.
 
 ![preview](https://github.com/DavidValin/universal-prompt-language/raw/master/preview.gif)
 
@@ -17,7 +17,7 @@ All operations are integrated in a single cli command called `upl`.
 
 ### Quickview
 
-* Specification: [`upl-spec/upl-1.0-rfc.pdf`](upl-spec/upl-1.0-rfc.pdf)
+* Specification: [`upl-spec/upl-1.0-rfc.pdf`](upl-spec/upl-1.0-rfc.md)
 * Prompt Browser: `upl <prompts_folder>` (or `upl` alone to browse `~/.upl`)
 * Prompt Builder: `upl b <prompt_file.txt>` (builds a single file directly)
 * Repository server: `upl start-repository`
