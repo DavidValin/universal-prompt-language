@@ -95,7 +95,8 @@ upl | aichat
 If what you want is a voice response from llm, check [vtmate](https://www.github.com/DavidValin/vtmate), example:
 
 ```bash
-upl | vtmate -i -
+upl > prompt.txt
+vtmate -i prompt.txt
 ```
 
 ### UPL Repository
