@@ -549,11 +549,10 @@ fn integration_element_ref_list_of_objects() {
 name: p
 params:
   server:
-    type: object
+    type: object_shape
     ofields:
       host:
         type: string
-        def: \"localhost\"
       port:
         type: number
         def: 8080
@@ -589,11 +588,10 @@ params:
     type: list
     etype: server
   server:
-    type: object
+    type: object_shape
     ofields:
       host:
         type: string
-        def: \"localhost\"
       port:
         type: number
         def: 8080
@@ -615,7 +613,7 @@ fn integration_element_ref_with_supplied_values() {
 name: p
 params:
   server:
-    type: object
+    type: object_shape
     ofields:
       host:
         type: string
@@ -657,7 +655,7 @@ fn integration_element_ref_case_insensitive() {
 name: p
 params:
   server:
-    type: object
+    type: object_shape
     ofields:
       host:
         type: string
@@ -684,7 +682,7 @@ fn integration_element_ref_list_projection() {
 name: p
 params:
   server:
-    type: object
+    type: object_shape
     ofields:
       host:
         type: string
@@ -731,7 +729,7 @@ fn integration_element_ref_cycle_is_parse_error() {
 name: p
 params:
   node:
-    type: object
+    type: object_shape
     ofields:
       children:
         type: list
@@ -745,6 +743,271 @@ x
         res,
         Err(universal_prompt_language::upl::parser::PromptParseError::CircularElementRef { .. })
     ));
+}
+
+// ---------------------------------------------------------------------------
+// `object_shape` type definitions and `type: <name>` inheritance
+// (RFC §3.1 / §3.4 / §3.4.2)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn integration_object_shape_not_asked_type_ref_shape_into_object() {
+    // `host` is an object_shape (never asked on its own); `cfg` is an object that
+    // reuses host's shape via `type: host` and IS asked.
+    // Rendering with defaults uses host's field defaults for cfg.
+    let upl = "\
+--
+name: p
+params:
+  host:
+    type: object_shape
+    ofields:
+      host:
+        type: string
+        def: \"localhost\"
+      port:
+        type: number
+        def: 8080
+  cfg:
+    type: host
+--
+Host: [[[CFG.HOST]]] Port: [[[CFG.PORT]]]
+--
+";
+    let prompt = parse(upl);
+    // cfg's ofields were spliced in from host.
+    let cfg = prompt.variable_definitions.get("cfg").unwrap();
+    assert_eq!(cfg.type_ref.as_deref(), Some("host"));
+    assert!(cfg.ofields_definitions.as_ref().unwrap().contains_key("host"));
+    assert!(cfg.ofields_definitions.as_ref().unwrap().contains_key("port"));
+    // host is an object_shape → not collectible.
+    let builder = PromptBuilder::new(prompt.clone());
+    assert!(builder.referenced_type_defs().contains("host"));
+    let out = PromptBuilder::new(prompt).render_with_defaults().unwrap();
+    assert_eq!(out, "Host: localhost Port: 8080\n");
+}
+
+#[test]
+fn integration_object_type_ref_with_def() {
+    // An inheriting object's top-level object-literal `def` is NOT honored by
+    // `render_with_defaults` (object defs are checked for kind only, RFC §3.3;
+    // only field-level `def`s are used at render time). The inherited field
+    // defaults therefore win. (To override a field default, declare the object
+    // with inline `ofields` instead of inheriting.)
+    let upl = "\
+--
+name: p
+params:
+  host:
+    type: object_shape
+    ofields:
+      host:
+        type: string
+        def: \"localhost\"
+      port:
+        type: number
+        def: 8080
+  cfg:
+    type: host
+    def: { host: \"db.local\", port: 5432 }
+--
+Host: [[[CFG.HOST]]] Port: [[[CFG.PORT]]]
+--
+";
+    let prompt = parse(upl);
+    let out = PromptBuilder::new(prompt).render_with_defaults().unwrap();
+    assert_eq!(out, "Host: localhost Port: 8080\n");
+}
+
+#[test]
+fn integration_object_type_ref_forward_reference() {
+    // The inheriting object may be declared before the object_shape it names.
+    let upl = "\
+--
+name: p
+params:
+  cfg:
+    type: host
+  host:
+    type: object_shape
+    ofields:
+      host:
+        type: string
+        def: \"localhost\"
+--
+Host: [[[CFG.HOST]]]
+--
+";
+    let prompt = parse(upl);
+    let out = PromptBuilder::new(prompt).render_with_defaults().unwrap();
+    assert_eq!(out, "Host: localhost\n");
+}
+
+#[test]
+fn integration_object_type_ref_from_object_shape_ok() {
+    // An `object` may inherit from a declared `object_shape` — no cycle here.
+    let upl = "\
+--
+name: p
+params:
+  a:
+    type: b
+  b:
+    type: object_shape
+    ofields:
+      x:
+        type: string
+--
+x
+--
+";
+    // `a` (object) reuses `b` (object_shape) — this is fine, no cycle.
+    let prompt = parse(upl);
+    assert!(prompt.variable_definitions.get("a").unwrap().ofields_definitions.is_some());
+}
+
+// Note: a pure `type: <name>` cycle is not constructible — the inheritance
+// target must be an `object_shape`, and `object_shape` cannot itself use
+// `type: <name>` (only `object` can reuse a shape). Cycle
+// detection is therefore exercised through `etype` references instead; see
+// `integration_element_ref_cycle_is_parse_error` and the parser's
+// `test_element_ref_cycle_is_error`.
+
+#[test]
+fn integration_object_type_ref_target_must_be_object_shape() {
+    // `type: <name>` naming a declared `object` (not object_shape)
+    // is a parse error.
+    let upl = "\
+--
+name: p
+params:
+  cfg:
+    type: host
+  host:
+    type: object
+    ofields:
+      host:
+        type: string
+--
+x
+--
+";
+    let res = universal_prompt_language::upl::parser::PromptParser::parse(upl);
+    assert!(matches!(
+        res,
+        Err(universal_prompt_language::upl::parser::PromptParseError::InvalidTypeRef { .. })
+    ));
+}
+
+#[test]
+fn integration_object_shape_requires_ofields() {
+    // An object_shape without an ofields block (and not referenced, so the
+    // reuse path doesn't fire first) is a parse error.
+    let upl = "\
+--
+name: p
+params:
+  host:
+    type: object_shape
+  cfg:
+    type: object
+    ofields:
+      x:
+        type: string
+--
+x
+--
+";
+    let res = universal_prompt_language::upl::parser::PromptParser::parse(upl);
+    assert!(matches!(
+        res,
+        Err(universal_prompt_language::upl::parser::PromptParseError::ObjectShapeMissingOfields { .. })
+    ));
+}
+
+#[test]
+fn integration_object_shape_as_nested_field_is_allowed() {
+    // A nested field may be `type: object_shape` (or `type: object`); when
+    // nested it is collected inline during parent collection, identical to a
+    // nested `object`. The object_shape-vs-object distinction only matters at
+    // root level (object is asked as a param; object_shape is not).
+    let upl = "\
+--
+name: p
+params:
+  cfg:
+    type: object
+    ofields:
+      sub:
+        type: object_shape
+        ofields:
+          x:
+            type: string
+            def: \"x\"
+--
+sub.x=[[[CFG.SUB.X]]]
+--
+";
+    let prompt = parse(upl);
+    let out = PromptBuilder::new(prompt).render_with_defaults().unwrap();
+    assert_eq!(out, "sub.x=x\n");
+}
+
+#[test]
+fn integration_object_type_ref_and_ofields_mutually_exclusive() {
+    // `type: <shape>` (a shape reference) must not also declare inline
+    // `ofields` — the referenced object_shape provides the fields.
+    let upl = "\
+--
+name: p
+params:
+  host:
+    type: object_shape
+    ofields:
+      host:
+        type: string
+  cfg:
+    type: host
+    ofields:
+      extra:
+        type: string
+--
+x
+--
+";
+    let res = universal_prompt_language::upl::parser::PromptParser::parse(upl);
+    assert!(res.is_err());
+}
+
+#[test]
+fn integration_object_field_reuses_object_shape() {
+    // A nested object field may inherit an object_shape's shape via
+    // `type: <name>` (RFC §3.4.2 inside an object).
+    let upl = "\
+--
+name: p
+params:
+  host:
+    type: object_shape
+    ofields:
+      host:
+        type: string
+        def: \"localhost\"
+      port:
+        type: number
+        def: 8080
+  cfg:
+    type: object
+    ofields:
+      primary:
+        type: host
+--
+Host: [[[CFG.PRIMARY.HOST]]] Port: [[[CFG.PRIMARY.PORT]]]
+--
+";
+    let prompt = parse(upl);
+    let out = PromptBuilder::new(prompt).render_with_defaults().unwrap();
+    assert_eq!(out, "Host: localhost Port: 8080\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -883,7 +1146,7 @@ fn integration_option_single_object_etype_render() {
 name: p
 params:
   feature:
-    type: object
+    type: object_shape
     ofields:
       name:
         type: string
@@ -914,7 +1177,7 @@ fn integration_option_single_object_etype_supplied_value() {
 name: p
 params:
   feature:
-    type: object
+    type: object_shape
     ofields:
       name:
         type: string
@@ -947,7 +1210,7 @@ fn integration_option_multi_object_etype_loop() {
 name: p
 params:
   feature:
-    type: object
+    type: object_shape
     ofields:
       name:
         type: string
@@ -982,7 +1245,7 @@ fn integration_option_multi_object_etype_supplied_values() {
 name: p
 params:
   feature:
-    type: object
+    type: object_shape
     ofields:
       name:
         type: string

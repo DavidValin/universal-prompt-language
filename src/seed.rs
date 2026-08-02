@@ -21,6 +21,7 @@ const SAMPLES: &[(&str, &str)] = &[
     ("create_a_plan.txt", include_str!("../samples/create_a_plan.txt")),
     ("create_rest_api.txt", include_str!("../samples/create_rest_api.txt")),
     ("explain_subject.txt", include_str!("../samples/explain_subject.txt")),
+    ("implement_user_story.txt", include_str!("../samples/implement_user_story.txt")),
     ("review_article.txt", include_str!("../samples/review_article.txt")),
     ("teach_foundations.txt", include_str!("../samples/teach_foundations.txt")),
 ];

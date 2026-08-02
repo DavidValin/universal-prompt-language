@@ -150,7 +150,7 @@ impl PromptBuilder {
                 }
                 VariableValue::List(vec![])
             }
-            Object => {
+            Object | ObjectShape => {
                 let mut map = ObjectMap::new();
                 if let Some(nested) = &def.ofields_definitions {
                     for (k, nd) in nested {
@@ -189,13 +189,13 @@ impl PromptBuilder {
     /// answers are preserved (not reset). Going back from the first parameter
     /// cancels the build.
     fn collect_values(&self) -> Result<ValueMap, BuilderError> {
-        // Object variables referenced via `etype: <name>` (by any variable,
-        // including nested `ofields`) are type definitions used only as
-        // shape templates for list/option elements. They are not collectible
-        // values and must be skipped during interactive collection;
-        // otherwise the builder would prompt for them as if they were
-        // standalone fields (which the user would perceive as phantom
-        // "item data" prompts after finishing a list).
+        // Top-level `object_shape` variables are pure type definitions (RFC
+        // §3.1/§3.4): they declare a reusable shape and are never prompted
+        // for on their own — only the site that references them (a
+        // `list`/`option_*` element, or an `object` inheriting the shape via
+        // `type: <name>`) is collected. They must be skipped
+        // here; otherwise the builder would prompt for them as if they were
+        // standalone fields.
         let referenced = self.referenced_type_defs();
         let defs: Vec<(String, &VariableDefinition)> = self
             .prompt
@@ -247,31 +247,23 @@ impl PromptBuilder {
         Ok(map)
     }
 
-    /// Set of top-level object variable names (lowercased) that are referenced
-    /// via `etype: <name>` by some other variable — including references
-    /// buried in nested `ofields`. These are type definitions (shape
-    /// templates for list/option elements), not collectible values, so
-    /// `collect_values` skips them.
-    fn referenced_type_defs(&self) -> HashSet<String> {
+    /// Set of top-level variable names (lowercased) that are **not** collectible
+    /// — i.e. must be skipped during interactive collection. Under the RFC
+    /// (§3.1/§3.4) every top-level `object_shape` is a pure type definition: it
+    /// is never prompted for on its own, only at the site that references it
+    /// (a `list`/`option_*` element, or an `object` reusing its shape via
+    /// `type: <name>`). A top-level `object`, by contrast, is
+    /// always collectible (asked in declaration order) even if something
+    /// references it — but the parser rejects by-name references to an
+    /// `object`, so only `object_shape` ends up here.
+    pub fn referenced_type_defs(&self) -> HashSet<String> {
         let mut out = HashSet::new();
-        for d in self.prompt.variable_definitions.values() {
-            Self::collect_element_refs(d, &mut out);
-        }
-        out
-    }
-
-    /// Recursively collect the names of object variables referenced via
-    /// `etype: <name>` (the `element_ref` field) on this definition and any
-    /// of its nested `ofields`.
-    fn collect_element_refs(def: &VariableDefinition, out: &mut HashSet<String>) {
-        if let Some(r) = &def.element_ref {
-            out.insert(r.to_lowercase());
-        }
-        if let Some(nested) = &def.ofields_definitions {
-            for (_, nd) in nested.iter() {
-                Self::collect_element_refs(nd, out);
+        for (name, def) in &self.prompt.variable_definitions {
+            if def.r#type == VariableType::ObjectShape {
+                out.insert(name.to_lowercase());
             }
         }
+        out
     }
 
     #[allow(clippy::only_used_in_recursion)]
@@ -289,7 +281,7 @@ impl PromptBuilder {
             Boolean => self.collect_boolean(path, def, default),
             OptionSingle => self.collect_option_single(path, def, default),
             OptionMulti => self.collect_option_multi(path, def, default),
-            Object => self.collect_object(path, def),
+            Object | ObjectShape => self.collect_object(path, def),
             List => self.collect_list(path, def, default),
         }
     }
@@ -563,6 +555,7 @@ impl PromptBuilder {
             element_type: def.element_type,
             element_ref: None,
             label: None,
+            type_ref: None,
             ofields_definitions: def.ofields_definitions.clone(),
         };
 
@@ -1039,11 +1032,12 @@ mod tests {
         PromptParser::parse(upl).expect("UPL should parse")
     }
 
-    /// `create_rest_api`-style prompt: `resource` is referenced by the
-    /// top-level `resources` list, and `field` is referenced by the `fields`
-    /// list nested inside `resource`'s ofields. Both must be flagged as type
-    /// definitions (skipped during collection). A plain standalone object
-    /// (`materials`) that nothing references must NOT be flagged.
+    /// `create_rest_api`-style prompt: `resource` is an `object_shape` reused
+    /// by the top-level `resources` list, and `field` is an `object_shape`
+    /// reused by the `fields` list nested inside `resource`'s ofields. Both
+    /// are `object_shape` type definitions and must be skipped during
+    /// collection. A plain standalone `object` (`materials`) that nothing
+    /// references must NOT be skipped — it is a collectible parameter.
     #[test]
     fn referenced_type_defs_skips_referenced_objects_only() {
         let upl = "\
@@ -1058,7 +1052,7 @@ params:
     etype: resource
     def: []
   resource:
-    type: object
+    type: object_shape
     ofields:
       name:
         type: string
@@ -1075,7 +1069,7 @@ params:
         etype: field
         def: []
   field:
-    type: object
+    type: object_shape
     ofields:
       name:
         type: string
@@ -1097,17 +1091,17 @@ x
         let referenced = builder.referenced_type_defs();
         assert!(
             referenced.contains("resource"),
-            "resource is referenced via etype and should be a type definition: {:?}",
+            "resource is an object_shape and should be a type definition: {:?}",
             referenced
         );
         assert!(
             referenced.contains("field"),
-            "field is referenced by a nested list and should be a type definition: {:?}",
+            "field is an object_shape (referenced by a nested list) and should be a type definition: {:?}",
             referenced
         );
         assert!(
             !referenced.contains("materials"),
-            "materials is not referenced and should remain collectible: {:?}",
+            "materials is a plain object and should remain collectible: {:?}",
             referenced
         );
         assert!(
@@ -1118,8 +1112,8 @@ x
     }
 
     /// A list with an inline `etype: object` (its own `ofields`, no named
-    /// reference) produces no element_ref, so nothing is skipped — a
-    /// standalone object declared alongside it is still collected.
+    /// reference) produces no element_ref; a standalone `object` declared
+    /// alongside it is still collected, and nothing is skipped.
     #[test]
     fn referenced_type_defs_empty_for_inline_object_etype() {
         let upl = "\
@@ -1151,8 +1145,10 @@ x
         );
     }
 
-    /// Element references are case-insensitive (`etype: Server` resolves to
-    /// `server`); the referenced set is lowercased so the skip check matches
+    /// A top-level `object_shape` is skipped (never asked) even when nothing
+    /// references it — it is a pure type definition. Element references are
+    /// case-insensitive (`etype: Server` resolves to `server`); the
+    /// referenced set is lowercased so the skip check matches
     /// case-insensitively.
     #[test]
     fn referenced_type_defs_case_insensitive() {
@@ -1161,7 +1157,7 @@ x
 name: p
 params:
   server:
-    type: object
+    type: object_shape
     ofields:
       host:
         type: string
@@ -1170,6 +1166,11 @@ params:
     type: list
     etype: Server
     def: []
+  unused:
+    type: object_shape
+    ofields:
+      x:
+        type: string
 --
 x
 --
@@ -1177,10 +1178,11 @@ x
         let builder = PromptBuilder::new(parse(upl));
         let referenced = builder.referenced_type_defs();
         assert!(referenced.contains("server"), "matched case-insensitively: {:?}", referenced);
+        assert!(referenced.contains("unused"), "unreferenced object_shape is still a type def: {:?}", referenced);
     }
 
-    /// `option_single`/`option_multi` with a referenced object etype also
-    /// marks that object as a type definition (skip it during collection).
+    /// `option_single`/`option_multi` with a referenced `object_shape` etype:
+    /// the object_shape is skipped during collection (it is a type def).
     #[test]
     fn referenced_type_defs_includes_option_object_etype() {
         let upl = "\
@@ -1188,7 +1190,7 @@ x
 name: p
 params:
   feature:
-    type: object
+    type: object_shape
     ofields:
       name:
         type: string

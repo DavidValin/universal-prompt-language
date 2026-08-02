@@ -860,6 +860,7 @@ fn type_name(t: &VariableType) -> &'static str {
         VariableType::Boolean => "boolean",
         VariableType::List => "list",
         VariableType::Object => "object",
+        VariableType::ObjectShape => "object_shape",
         VariableType::OptionSingle => "option_single",
         VariableType::OptionMulti => "option_multi",
     }

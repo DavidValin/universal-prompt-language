@@ -1,6 +1,6 @@
 # UPL — Universal Prompt Language
 
-* **Version:** 1.0-rc.1
+* **Version:** 1.0-rc.2
 * **Status:** Official Standard Specification
 * **File Extension:** `.txt` or `.upl`
 
@@ -8,15 +8,18 @@
 
 ## 1. Overview
 
-The **Universal Prompt Language (UPL)** is a human-readable, YAML-like language for authoring parameterized prompt templates. A UPL file declares a set of typed input variables, their defaults and options, plus a prompt body containing placeholders, conditional expressions, and `for` loops. At render time, the engine substitutes variable values, evaluates conditionals with runtime type checking, and expands loops to produce the final prompt string.
+The **Universal Prompt Language (UPL)** is a human-readable language for authoring parameterized self-contained prompt templates. A UPL file declares a set of typed input variables, their defaults and options, plus a prompt body containing placeholders, conditional expressions, and `for` loops. At render time, the engine substitutes variable values, evaluates conditionals with runtime type checking, and expands loops to produce the final prompt string.
 
 UPL is designed to be:
 
 - **Human-readable** — plain text, easy to author and review.
+- **Self-contained** — the upl prompt defined the complete list of parameters and the prompt body and its rendering logic
 - **Strictly typed** — every variable has an explicit type, validated at parse and render time.
 - **Safe** — only the `[[[` and `{{{` delimiters trigger expansion; unmatched blocks are ignored,
   so code snippets containing similar-looking sequences are not misinterpreted.
-- **Composable** — supports nested objects, lists of objects, and recursive structures.
+- **Composable** — supports nested objects, lists of objects, reusable object
+  shapes (`object_shape`), shape reuse via `type: <object_shape_name>`, and
+  recursive structures.
 
 ---
 
@@ -78,11 +81,11 @@ Variables are declared under the `params` block. Each variable has the following
 |----------------|-------------|---------------------------------------------|-----------------------------------------------|
 | `type`         | Yes         | All                                         | One of the types listed in §3.1.              |
 | `desc`         | No          | All                                         | Optional human-readable description.          |
-| `def`          | No          | All                                         | Default value used when no value is supplied. |
+| `def`          | No          | All                                         | Default value used when no value is supplied. For `object_shape`, the declared `def`/field defaults are applied at every site that references the object_shape. |
 | `opts`         | No          | `option_single`, `option_multi`             | List of allowed options. Each entry must match the variable's `etype` (§3.3). |
-| `etype`        | Conditional | `list`, `option_single`, `option_multi`     | Element type: a built-in type name (§3.1) or the name of a declared `object` variable (§3.4). Not allowed on `object` (an object's shape is described by `ofields`). For `option_single` it is **optional** and defaults to `string`; for `option_multi` it is **required**. The allowed etypes for `option_single`/`option_multi` are `string`, `long_string`, `number`, and a referenced `object` (§3.4). `boolean`, `list`, `option_single`, and `option_multi` are not valid option etypes. The allowed etypes for `list` are `string`, `long_string`, `number`, `boolean`, and a referenced `object` (§3.4); `list`, `option_single`, and `option_multi` are not valid list etypes. |
-| `ofields`      | Conditional | `object`                                    | Map of object field definitions (recursive).  |
-| `label`        | No          | `option_single`, `option_multi`             | Required when `etype` is a referenced `object`: the field name (declared on that object) whose value is shown as the menu label for each option. Ignored for scalar etypes. |
+| `etype`        | Conditional | `list`, `option_single`, `option_multi`     | Element type: a built-in type name (§3.1) — including the inline `object` (the variable then declares its element shape via its own `ofields`) — or the name of a declared `object_shape` variable (§3.4). Not allowed on `object`/`object_shape` (an object's shape is described by `ofields`). For `option_single` it is **optional** and defaults to `string`; for `option_multi` it is **required**. The allowed etypes for `option_single`/`option_multi` are `string`, `long_string`, `number`, the inline `object`, and a referenced `object_shape` (§3.4). `boolean`, `list`, `option_single`, `option_multi`, and `object_shape` (the literal type name) are not valid option etypes. The allowed etypes for `list` are `string`, `long_string`, `number`, `boolean`, the inline `object`, and a referenced `object_shape` (§3.4); `list`, `option_single`, `option_multi`, and `object_shape` (the literal type name) are not valid list etypes. |
+| `ofields`      | Conditional | `object`, `object_shape`                    | Map of object field definitions (recursive). Required on `object_shape`; on `object` either `ofields` (inline) or `type: <object_shape_name>` (§3.4.2) must be present, but not both.  |
+| `label`        | No          | `option_single`, `option_multi`             | Required when `etype` is a referenced `object_shape`: the field name (declared on that object_shape) whose value is shown as the menu label for each option. Ignored for scalar etypes. |
 
 `def` is **optional** for every type. When `def` is omitted (and no value is supplied interactively or programmatically), the variable falls back to a type-appropriate default:
 
@@ -96,6 +99,7 @@ Variables are declared under the `params` block. Each variable has the following
 | `option_single`  | the first entry in `opts`                                 |
 | `option_multi`   | `[]`                                                      |
 | `object`         | an object whose each field is set to its own default per this table (recursively) |
+| `object_shape`     | not asked at its definition site; its `def`/field defaults are applied where it is referenced (see §3.4) |
 
 These fallbacks are also used to synthesize missing nested fields when rendering with defaults.
 
@@ -103,27 +107,42 @@ These fallbacks are also used to synthesize missing nested fields when rendering
 
 All type names are **lowercase**.
 
-| Type             | Description                                     | Requires `etype`                     | Requires `ofields` | Requires `opts` |
+| Type             | Description                                     | Requires `etype`                     | Requires `ofields` | Requires `opts`  |
 |------------------|-------------------------------------------------|--------------------------------------|--------------------|------------------|
-| `string`         | Plain string                                   | No                                   | No                 | No               |
+| `string`         | Plain string                                    | No                                   | No                 | No               |
 | `long_string`    | Multi-line or long string (e.g. code)           | No                                   | No                 | No               |
 | `number`         | Floating-point number                           | No                                   | No                 | No               |
 | `boolean`        | `true` / `false`                                | No                                   | No                 | No               |
-| `list`           | List of free entered values                    | **Yes**                              | No                 | No               |
-| `object`         | Struct-like object with named fields           | No                                   | **Yes**            | No               |
+| `list`           | List of free entered values                     | **Yes**                              | No                 | No               |
+| `object`         | Struct-like object with named fields. Asked to the user as a parameter in declaration order. | No  | **Yes** (or `type: <object_shape>`) | No  |
+| `object_shape`   | Reusable object shape (same fields as `object`). **Not** asked to the user at its definition site; only asked where it is referenced. | No | **Yes** | No |
 | `option_single`  | Single choice from a list of options           | Yes (optional, defaults to `string`) | No                 | **Yes** (≥ 2)    |
 | `option_multi`   | Multiple choices from a list of options        | **Yes**                              | No                 | **Yes** (≥ 2)    |
 
 > A `long_string` variable also accepts a heredoc form for `def` (see §3.5).
 
 > The `etype` of an `option_single`/`option_multi` may be `string`,
-> `long_string`, `number`, or the name of a declared `object` variable
+> `long_string`, `number`, or the name of a declared `object_shape` variable
 > (§3.4). `boolean` is not a valid option etype. When `etype` is a
-> referenced object, the `label` field is **required** (§3.6).
+> referenced object_shape, the `label` field is **required** (§3.6).
+
+> `object_shape` and `object` both describe an object shape via `ofields`, but
+> differ in how they are presented to the user at build time: an `object` is a
+> **collectible parameter** (the builder prompts for its fields in
+> declaration order), while an `object_shape` is a **pure type definition** and
+> is never prompted for on its own — it is only collected at the site that
+> references it (a `list`/`option_*` element, or an `object` inheriting its
+> fields via `type: <name>`). Both `object` and `object_shape` may appear
+> as nested field types; when nested, both are collected inline during their
+> parent's collection (the distinction only matters at root level).
 
 ### 3.2 Nested Objects
 
-`object` variables define their fields under an `ofields` block. Field definitions may themselves be `object` variables, allowing arbitrary recursion depth.
+An `object` variable is a **collectible parameter**: at build time the builder
+prompts the user for each of its fields, in declaration order (interleaved with
+the other top-level params in the order they were declared). Its fields are
+declared under an `ofields` block. Field definitions may themselves be
+`object` variables, allowing arbitrary recursion depth.
 
 ```text
 params:
@@ -147,21 +166,31 @@ params:
             def: ""
 ```
 
+An `ofields` entry of an `object` (or `object_shape`) may **not** reference a
+top-level `object` param: there is no `etype: <object_name>` form and no
+`type: <object_name>` form. To reuse a shape inside an `object` (or
+`object_shape`) field, declare the shared shape as an `object_shape` and use it
+via `type: <name>` (§3.4). Nesting of `object`/`object_shape` fields inside
+`object`/`object_shape` ofields remains fully supported (as in the `ssl`
+field above).
+
 ### 3.3 Validation Rules
 
 - `type` must be one of the values listed in §3.1.
-- `etype` is only allowed when `type` is `list`, `option_single`, or `option_multi`. It is not allowed on `object` (an object's shape is described by `ofields`).
-- `etype` may be either a built-in type name (§3.1) or the name of a declared `object` variable in the same `params` block (see §3.4).
-- For `list`, `etype` may only be `string`, `long_string`, `number`, `boolean`, or a referenced `object`. `list`, `option_single`, and `option_multi` are not valid list etypes.
-- For `option_single` and `option_multi`, `etype` may only be `string`, `long_string`, `number`, or a referenced `object`. `boolean`, `list`, `option_single`, and `option_multi` are not valid option etypes.
+- `etype` is only allowed when `type` is `list`, `option_single`, or `option_multi`. It is not allowed on `object` or `object_shape` (an object's shape is described by `ofields`).
+- `etype` may be either a built-in type name (§3.1) — including the literal `object`, in which case the variable declares its element shape inline via its own `ofields` — or the name of a declared `object_shape` variable (see §3.4). Naming a declared `object` variable (instead of an `object_shape`) via `etype` is an error — only `object_shape` is referenceable by name.
+- For `list`, `etype` may only be `string`, `long_string`, `number`, `boolean`, the inline `object` (with its own `ofields`), or a referenced `object_shape`. `list`, `option_single`, `option_multi`, and `object_shape` (the literal type name) are not valid list etypes.
+- For `option_single` and `option_multi`, `etype` may only be `string`, `long_string`, `number`, the inline `object` (with its own `ofields`), or a referenced `object_shape`. `boolean`, `list`, `option_single`, `option_multi`, and `object_shape` (the literal type name) are not valid option etypes.
 - For `option_single`, `etype` is optional and defaults to `string` when omitted. For `option_multi`, `etype` is required.
-- `label` is only allowed when `type` is `option_single` or `option_multi`, and is **required** when their `etype` is a referenced `object`. `label` MUST name a field declared on the referenced object, and that field's type MUST be
-  `string` or `long_string`. `label` is ignored for scalar etypes.
-- An element reference MUST resolve to a `object` variable that declares an `ofields` block. Element reference cycles are not allowed and MUST be reported as an error.
-- `ofields` is only allowed when `type` is `object`.
+- `label` is only allowed when `type` is `option_single` or `option_multi`, and is **required** when their `etype` is a referenced `object_shape` (the by-name form). `label` MUST name a field declared on the referenced object_shape, and that field's type MUST be
+  `string` or `long_string`. `label` is ignored for scalar etypes and for the inline `object` etype.
+- An element reference (the by-name form) MUST resolve to an `object_shape` variable that declares an `ofields` block. Element reference cycles are not allowed and MUST be reported as an error.
+- `ofields` is only allowed when `type` is `object` or `object_shape`. On an `object`, `ofields` is the inline field map; on an `object_shape`, `ofields` is always a map of field definitions (a shape declaration). An `object` must declare either `ofields` (inline) or `type: <object_shape_name>` (reuse a shape), but not both — `type: <name>` and `ofields` are mutually exclusive.
+- `type` accepts either a built-in type name (§3.1) or the name of a declared `object_shape` variable (§3.4.2). A non-builtin `type` value names a declared `object_shape` whose `ofields` are spliced in as this `object`'s own fields; the variable is then an `object` value of that shape (asked at root, collected inline when nested). Naming a declared `object` (instead of an `object_shape`) via `type` is a parse error — only `object_shape` is referenceable by name. Built-in type names are reserved and cannot be used as `object_shape` names.
+- An `ofields` entry of an `object` (or `object_shape`) may not reference a top-level `object` param: the only reusable-shape reference forms are `type: <object_shape_name>` (on `object`/`object_shape` fields) and `etype: <object_shape_name>` (on `list`/`option_*`). Referencing an `object` via `type` or `etype` is a parse error.
 - `opts` is only allowed for `option_single` and `option_multi`. Any other type declaring `opts` is a parse error. `opts` MUST contain **at least two entries** — a single-option menu is not meaningful and is a parse error.
-- All values supplied via `def`, `opts`, etc. must match the declared `type` and `etype`. Specifically, each entry in `opts` MUST be coercible to the option's `etype`: a `string`/`long_string` entry for a `string`/`long_string` etype, a `number` entry for a `number` etype, and an object literal matching the referenced object's `ofields` shape for an `object` etype. A mismatch is a parse error.
-- The `def` value MUST match the declared `type` (and, for `list`/`option_multi`, its `etype`): a `def` for a `number` variable must be a number literal; a `def` for a `boolean` must be `true`/`false`; a `def` for a `string`/`long_string` must be a string; a `def` for an `object` must be an object literal; a `def` for a `list` must be a list whose every element matches `etype`; a `def` for an `option_single` must be a single value matching `etype`; a `def` for an `option_multi` must be a list whose every element matches `etype`. A `def` value of the wrong kind is a parse error. (Object `def`s are checked for kind only — `object` — not for full field-shape conformance; extra or missing nested keys are tolerated and filled from defaults at render time.)
+- All values supplied via `def`, `opts`, etc. must match the declared `type` and `etype`. Specifically, each entry in `opts` MUST be coercible to the option's `etype`: a `string`/`long_string` entry for a `string`/`long_string` etype, a `number` entry for a `number` etype, and an object literal matching the referenced object_shape's `ofields` shape (or the inline `ofields` shape) for an `object`/`object_shape` etype. A mismatch is a parse error.
+- The `def` value MUST match the declared `type` (and, for `list`/`option_multi`, its `etype`): a `def` for a `number` variable must be a number literal; a `def` for a `boolean` must be `true`/`false`; a `def` for a `string`/`long_string` must be a string; a `def` for an `object` or `object_shape` must be an object literal; a `def` for a `list` must be a list whose every element matches `etype`; a `def` for an `option_single` must be a single value matching `etype`; a `def` for an `option_multi` must be a list whose every element matches `etype`. A `def` value of the wrong kind is a parse error. (Object `def`s are checked for kind only — `object` — not for full field-shape conformance; extra or missing nested keys are tolerated and filled from defaults at render time.)
 
 ### 3.3.1 Literal Value Syntax
 
@@ -179,14 +208,26 @@ Bare (unquoted) tokens that are not `true`/`false`/numbers/inline collections ar
 
 ### 3.4 Object Type Reuse (Element References)
 
-The `etype` of a `list`, `option_single`, or `option_multi` may name a **previously- or forward-declared `object` variable** instead of a built-in type. The referenced object's `ofields` shape is then reused as the element structure of the list/options, so the field definitions need not be repeated inline.
+The `etype` of a `list`, `option_single`, or `option_multi` may name a **previously- or forward-declared `object_shape` variable** instead of a built-in type. The referenced object_shape's `ofields` shape is then reused as the element structure of the list/options, so the field definitions need not be repeated inline. Likewise, an `object` (or a nested object field) may reuse a declared `object_shape`'s `ofields` by writing `type: <object_shape_name>` instead of `type: object` + an inline `ofields` map; the referenced object_shape's fields are spliced in as the object's own fields.
 
-The referenced variable MUST be declared in the same `params` block with `type: object` and an `ofields` block. References are resolved at parse time; after resolution the variable behaves exactly as if its `ofields` had been written inline. Forward references (declaring the variable before the object it names) are permitted. Circular references are not allowed and MUST be reported as errors. For `option_single`/`option_multi` with an `object` etype, the `label` field (§3.6) is required.
+The referenced variable MUST be declared in the same `params` block with `type: object_shape` and an `ofields` block. References are resolved at parse time; after resolution the referencing variable behaves exactly as if the referenced object_shape's `ofields` had been written inline. Forward references (declaring the referencing variable before the object_shape it names) are permitted. Circular references are not allowed and MUST be reported as errors. For `option_single`/`option_multi` with an `object_shape` etype, the `label` field (§3.6) is required.
+
+> An `object_shape` is **not** asked to the user at its definition site — it is a
+> pure type definition. It is only collected at the site that references it: a
+> `list`/`option_*` element prompt, or an `object`/field that uses it via
+> `type: <name>` (in which case that `object`/field is the one prompted,
+> with the shape's fields). A top-level `object` (not `object_shape`) cannot
+> be referenced via `etype`/`type`; only `object_shape` is referenceable.
+> Both `object` and `object_shape` may appear as nested field types; when
+> nested they are collected inline during parent collection (identically), so
+> the `object`-vs-`object_shape` distinction only matters at root level.
+
+#### 3.4.1 `etype` reference (list / option_single / option_multi)
 
 ```text
 params:
-  server:
-    type: object
+  host:
+    type: object_shape
     ofields:
       host:
         type: string
@@ -196,7 +237,7 @@ params:
         def: 8080
   servers:
     type: list
-    etype: server
+    etype: host
     def:
       - { host: "localhost", port: 8080 }
       - { host: "db.local", port: 5432 }
@@ -215,12 +256,12 @@ Hosts:
 - db.local:5432
 ```
 
-The same mechanism works for `option_multi`, where each chosen option is an object shaped like the referenced `object` variable:
+The same mechanism works for `option_multi`, where each chosen option is an object shaped like the referenced `object_shape`:
 
 ```text
 params:
   feature:
-    type: object
+    type: object_shape
     ofields:
       name:
         type: string
@@ -240,6 +281,45 @@ Enabled:
 - [[[F.NAME]]]
 {{{end for}}}
 ```
+
+#### 3.4.2 Shape reuse (`type: <object_shape_name>`)
+
+An `object` (or a nested object field) may reuse the fields of a declared
+`object_shape` by writing `type: <object_shape_name>` instead of `type: object`
+with an inline `ofields` map. The resulting `object` is still a **collectible
+parameter** (it is prompted at build time), but its field shape is the
+referenced object_shape's `ofields`. This is the form to use when an object
+param (or field) should reuse a shared shape defined once. `type: <name>` is
+mutually exclusive with `ofields` (the referenced object_shape provides the
+fields). Built-in type names are reserved and cannot shadow or be shadowed by
+an `object_shape` name.
+
+```text
+params:
+  host:
+    type: object_shape
+    ofields:
+      host:
+        type: string
+        def: "localhost"
+      port:
+        type: number
+        def: 8080
+  cfg:
+    type: host
+--
+Host: [[[CFG.HOST]]] Port: [[[CFG.PORT]]]
+```
+
+Renders (with defaults) to:
+
+```text
+Host: localhost Port: 8080
+```
+
+At build time the builder prompts for `cfg` (not `host`), collecting `host`
+and `port` as its fields. The `host` object_shape itself is never prompted for
+on its own.
 
 ### 3.5 Long String Defaults (Heredoc Form)
 
@@ -294,14 +374,14 @@ Content-Type: application/json
 
 ### 3.6 Option Labels (`label`)
 
-When an `option_single` or `option_multi` variable has an `object` etype, each entry in `opts` is an object literal. The interactive menu needs a single, human-readable string to display for each option, so a `label` field is **required** in that case. `label` names a field declared on the referenced object; the value of that field on each option object becomes its menu label.
+When an `option_single` or `option_multi` variable has an `object_shape` etype, each entry in `opts` is an object literal. The interactive menu needs a single, human-readable string to display for each option, so a `label` field is **required** in that case. `label` names a field declared on the referenced object_shape; the value of that field on each option object becomes its menu label.
 
-The named field MUST be declared on the referenced object with type `string` or `long_string`. `label` is only meaningful for `option_single`/`option_multi` with an `object` etype and is ignored (and should be omitted) for scalar etypes.
+The named field MUST be declared on the referenced object_shape with type `string` or `long_string`. `label` is only meaningful for `option_single`/`option_multi` with an `object_shape` etype and is ignored (and should be omitted) for scalar etypes.
 
 ```text
 params:
   feature:
-    type: object
+    type: object_shape
     ofields:
       name:
         type: string
@@ -343,7 +423,7 @@ Hello, [[[USERNAME]]]!
 A `list` variable referenced as `[[[VAR]]]` renders its elements joined with `", "`. The rendering of each element depends on its `etype`:
 
 - For scalar `etype`s (`string`, `long_string`, `number`, `boolean`), each element is rendered as its literal value (see §4.6 for value rendering rules).
-- For an `object` `etype`, each element is rendered as a comma-separated list of `field: value` pairs (no enclosing braces), e.g. `host: localhost, port: 8080`. For structured output, prefer dotted-path access (§4.1.2), field projection (§4.1.5), or a `for` loop (§4.3).
+- For an `object` `etype` (declared inline with its own `ofields`, or via a referenced `object_shape` per §3.4), each element is rendered as a comma-separated list of `field: value` pairs (no enclosing braces), e.g. `host: localhost, port: 8080`. For structured output, prefer dotted-path access (§4.1.2), field projection (§4.1.5), or a `for` loop (§4.3).
 
 ```text
 params:
@@ -438,7 +518,7 @@ Dotted paths also work inside loop bodies, where the leading segment is the loop
 
 #### 4.1.3 Option Single
 
-An `option_single` variable holds exactly one value chosen from its `opts`. The optional `etype` (default `string`) determines the kind of each option; the supported etypes are `string`, `long_string`, `number`, and a referenced `object` (§3.4, requires `label` — §3.6). Referencing the variable as `[[[VAR]]]` renders the selected option's value: scalars render verbatim (see §4.6), and an object option renders as a comma-separated `field: value` list with no enclosing braces (use dotted-path access, §4.1.2, to extract fields). When no value is supplied, the `def` default is used.
+An `option_single` variable holds exactly one value chosen from its `opts`. The optional `etype` (default `string`) determines the kind of each option; the supported etypes are `string`, `long_string`, `number`, the inline `object`, and a referenced `object_shape` (§3.4, requires `label` — §3.6). Referencing the variable as `[[[VAR]]]` renders the selected option's value: scalars render verbatim (see §4.6), and an object option renders as a comma-separated `field: value` list with no enclosing braces (use dotted-path access, §4.1.2, to extract fields). When no value is supplied, the `def` default is used.
 
 ```text
 params:
@@ -484,7 +564,7 @@ Listening on port 443.
 
 #### 4.1.4 Option Multi
 
-An `option_multi` variable holds zero or more values chosen from its `opts`. The required `etype` determines the kind of each option; the supported etypes are `string`, `long_string`, `number`, and a referenced `object` (§3.4, requires `label` — §3.6). Referencing the variable as `[[[VAR]]]` renders the selected values joined with `", "`, in the order they were chosen. An empty selection renders as an empty string. When `etype` is `object`, each chosen option is an object; use dotted-path access inside a loop or projection to extract fields.
+An `option_multi` variable holds zero or more values chosen from its `opts`. The required `etype` determines the kind of each option; the supported etypes are `string`, `long_string`, `number`, the inline `object`, and a referenced `object_shape` (§3.4, requires `label` — §3.6). Referencing the variable as `[[[VAR]]]` renders the selected values joined with `", "`, in the order they were chosen. An empty selection renders as an empty string. When `etype` is `object` (inline or via an `object_shape`), each chosen option is an object; use dotted-path access inside a loop or projection to extract fields.
 
 ```text
 params:
@@ -587,7 +667,7 @@ When a value is substituted into the prompt body (via `[[[VAR]]]`, a ternary bra
 | Type             | Rendering                                                                 |
 |------------------|---------------------------------------------------------------------------|
 | `string`         | The string verbatim.                                                      |
-| `long_string`    | The string verbatim (may contain newlines).                              |
+| `long_string`    | The string verbatim (may contain newlines).                               |
 | `number`         | Integer-valued numbers render without a fractional part (e.g. `80`); otherwise the full floating-point representation is used (e.g. `3.14`). Negative numbers are prefixed with `-`. |
 | `boolean`        | `true` or `false`.                                                        |
 | `list`           | Elements rendered per this table, joined with `", "`.                     |
@@ -650,28 +730,31 @@ The ternary is the lowest-precedence operator. Parentheses may be used to group 
 
 ## 6. Features
 
-| Feature                                                   | Supported |
-|-----------------------------------------------------------|-----------|
-| String & long string variables                            | Yes       |
-| Number, boolean, list, option_single, option_multi        | Yes       |
-| Nested `object` variables (with `ofields` block)          | Yes       |
-| Variable defaults (`def`)                                 | Yes       |
-| Option lists (`opts`)                                     | Yes       |
-| Nested `etype` for lists / option_multi                   | Yes       |
-| Object type reuse via `etype: <object>` references (§3.4) | Yes       |
-| `[[[VAR]]]` placeholder syntax                            | Yes       |
-| `[[[OBJ.FIELD]]]` dotted-path object field access         | Yes       |
-| `[[[OBJ1.OBJ2.OBJ3.FIELD]]]` arbitrary-depth nesting      | Yes       |
-| `[[[LIST.FIELD]]]` list-of-objects field projection       | Yes       |
-| `{{{cond ? a : b}}}` ternary condition                    | Yes       |
-| All operators listed in §5 (incl. `==` alias, method-call form) | Yes  |
-| `{{{for <ITEM> in <LIST>}}}<content>{{{end for}}}` loops  | Yes       |
-| `{{{if <COND>}}}<content>{{{end if}}}` conditional blocks | Yes       |
-| Complex conditionals with variables and literals          | Yes       |
-| Runtime type checking during evaluation                   | Yes       |
-| Code snippets containing `[[[...]]` sequences             | Yes       |
-| Recursive object definitions (objects inside objects)     | Yes       |
-| `source` provenance metadata field (§2.1)                 | Yes       |
+| Feature                                                                 | Supported |
+|-------------------------------------------------------------------------|-----------|
+| String & long string variables                                          | Yes       |
+| Number, boolean, list, option_single, option_multi                      | Yes       |
+| Nested `object` variables (with `ofields` block)                        | Yes       |
+| `object_shape` type definitions (reusable shape, not asked)             | Yes       |
+| Variable defaults (`def`)                                               | Yes       |
+| Option lists (`opts`)                                                   | Yes       |
+| Nested `etype` for lists / option_multi                                 | Yes       |
+| Object type reuse via `etype: <object_shape>` references (§3.4)         | Yes       |
+| Shape reuse via `type: <object_shape_name>` on `object`/fields (§3.4.2) | Yes       |
+| Inline `etype: object` (with inline `ofields`)                          | Yes       |
+| `[[[VAR]]]` placeholder syntax                                          | Yes       |
+| `[[[OBJ.FIELD]]]` dotted-path object field access                       | Yes       |
+| `[[[OBJ1.OBJ2.OBJ3.FIELD]]]` arbitrary-depth nesting                    | Yes       |
+| `[[[LIST.FIELD]]]` list-of-objects field projection                     | Yes       |
+| `{{{cond ? a : b}}}` ternary condition                                  | Yes       |
+| All operators listed in §5 (incl. `==` alias, method-call form)         | Yes       |
+| `{{{for <ITEM> in <LIST>}}}<content>{{{end for}}}` loops                | Yes       |
+| `{{{if <COND>}}}<content>{{{end if}}}` conditional blocks               | Yes       |
+| Complex conditionals with variables and literals                        | Yes       |
+| Runtime type checking during evaluation                                 | Yes       |
+| Code snippets containing `[[[...]]` sequences                           | Yes       |
+| Recursive object definitions (objects inside objects)                   | Yes       |
+| `source` provenance metadata field (§2.1)                               | Yes       |
 
 ---
 
@@ -700,10 +783,11 @@ the metadata keys in the file.
 | `type`                | VariableType                               | One of the types in §3.1.                               |
 | `desc`                | string (optional)                          | Description.                                            |
 | `options`             | list<Value> (optional)                     | Allowed options (for `option_single`/`option_multi`). Each entry matches `element_type`. |
-| `element_type`        | VariableType (optional)                    | Element type (for `list`/`option_single`/`option_multi`). When `etype` names a declared `object` variable (§3.4), this is `object` and `ofields_definitions` holds the referenced object's resolved fields. |
-| `element_ref`         | string (optional)                          | Name of the declared `object` variable referenced via `etype: <name>` (resolved at parse time; kept for downstream default synthesis). |
-| `label`               | string (optional)                          | For `option_single`/`option_multi` with an `object` etype: the field whose value is the menu label (§3.6). |
-| `ofields_definitions` | map<string, VariableDefinition> (optional) | Object fields (for `object`).                           |
+| `element_type`        | VariableType (optional)                    | Element type (for `list`/`option_single`/`option_multi`). When `etype` names a declared `object_shape` variable (§3.4), this is `object` and `ofields_definitions` holds the referenced object_shape's resolved fields. |
+| `element_ref`         | string (optional)                          | Name of the declared `object_shape` variable referenced via `etype: <name>` (resolved at parse time; kept for downstream default synthesis). |
+| `label`               | string (optional)                          | For `option_single`/`option_multi` with an `object_shape` etype: the field whose value is the menu label (§3.6). |
+| `type_ref`            | string (optional)                           | Name of the declared `object_shape` variable whose `ofields` an `object` (or nested object field) reuses via `type: <name>` (resolved at parse time into `ofields_definitions`); `type` is then `Object`. |
+| `ofields_definitions` | map<string, VariableDefinition> (optional) | Object fields (for `object`/`object_shape`, or resolved from an `object_shape` reference). |
 
 ### 7.3 Value
 
@@ -727,11 +811,11 @@ A condition is represented as an expression tree:
 
 ### 7.5 ForLoop
 
-| Field            | Type       | Description                                    |
-|------------------|------------|------------------------------------------------|
-| `item_name`      | string     | Name of the loop variable.                     |
+| Field            | Type       | Description                                                                   |
+|------------------|------------|-------------------------------------------------------------------------------|
+| `item_name`      | string     | Name of the loop variable.                                                    |
 | `list_variable`  | string     | Name of the list-valued variable being iterated (a `list` or `option_multi`). |
-| `body`           | list<Node> | Body nodes rendered once per element (see §7.6). |
+| `body`           | list<Node> | Body nodes rendered once per element (see §7.6).                              |
 
 ### 7.6 Template / Node
 
@@ -910,6 +994,51 @@ Point out any security issues (for example, hardcoded credentials) and suggest i
 --
 ```
 
+### 8.4 Ask for a Server Inventory (object_shape reuse)
+
+This example shows the difference between `object` (asked to the user) and
+`object_shape` (a reusable shape, never asked on its own). `host` is an
+`object_shape` reused by the `servers` list and by the `primary` object
+(via `type: host`).
+
+```text
+--
+name: ask_server_inventory
+title: Ask for a Server Inventory
+desc: Collect a list of servers plus a primary server, all sharing one shape
+params:
+  host:
+    type: object_shape
+    ofields:
+      name:
+        type: string
+        def: "localhost"
+      port:
+        type: number
+        def: 8080
+  servers:
+    type: list
+    etype: host
+    def:
+      - { name: "web", port: 80 }
+      - { name: "db", port: 5432 }
+  primary:
+    type: host
+    def: { name: "web", port: 80 }
+--
+Primary: [[[PRIMARY.NAME]]]:[[[PRIMARY.PORT]]]
+All:
+{{{for S in SERVERS}}}
+- [[[S.NAME]]]:[[[S.PORT]]]
+{{{end for}}}
+--
+```
+
+At build time the builder prompts for `servers` (a list whose each item is
+collected using the `host` object_shape shape) and for `primary` (an object
+reusing the `host` shape via `type: host`). It never prompts for `host` on
+its own.
+
 ---
 
 ## 9. Parsing and Validation
@@ -924,9 +1053,12 @@ A conforming UPL implementation MUST perform the following steps:
    segment, if present — stripped). The file MUST use the `.txt` or `.upl` extension.
    `source` (§2.1), if present, is accepted as informational metadata.
 3. **Validate params** — ensure every variable declaration has a valid `type` and that the
-   type-specific fields (`etype`, `ofields`, `opts`, `label`) are used only where permitted (§3.3).
-   Resolve element references (§3.4) and verify they point to declared `object` variables with
-   `ofields`, reporting any cycle.
+   type-specific fields (`etype`, `ofields`, `opts`, `label`) are used only where permitted (§3.3)
+   (note: `type: <object_shape_name>` is not a separate key — it is the `type` value naming a declared object_shape).
+   Resolve element references (§3.4) and verify they point to declared `object_shape` variables with
+   `ofields`, reporting any cycle. Resolve `type: <object_shape_name>` references on `object`
+   variables/fields. Reject any by-name `etype`/`type` reference that names a declared `object` (only
+   `object_shape` is referenceable by name).
 4. **Validate field types** — for each variable, ensure `def` and `opts` values match the
    declared `type` and `element_type` (§3.3). A `def` whose `VariableValue` kind does not match
    the declared type (and, for lists, whose elements do not match `etype`) is a parse error.
@@ -962,8 +1094,11 @@ An implementation conforms to this standard if it:
   including the literal value syntax in §3.3.1 and the `long_string` heredoc form (§3.5).
 - Rejects `def` values whose kind does not match the declared `type`/`etype` (§3.3) as
   parse errors.
-- Supports object type reuse via `etype: <object>` references (§3.4) and the `label`
-  field for object-etype options (§3.6).
+- Supports object type reuse via `etype: <object_shape>` references (§3.4) and the `label`
+  field for object_shape-etype options (§3.6). Supports `type: <object_shape_name>` shape reuse
+  on `object` variables/fields (§3.4.2). Supports the inline `etype: object` (with inline `ofields`).
+  Treats `object` params as collectible (asked at build time) and `object_shape` params as
+  pure type definitions (never asked at their definition site, only at reference sites).
 - Expands `[[[VAR]]]` placeholders (including dotted-path access and list field projection),
   `{{{cond ? a : b}}}` ternaries, `{{{for ... in ...}}}{{{end for}}}` loops (over `list` and
   `option_multi`), and `{{{if ...}}}{{{end if}}}` blocks.

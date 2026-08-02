@@ -4,6 +4,27 @@
 use universal_prompt_language::upl::parser::{PromptParseError, PromptParser, Template, VariableType};
 
 #[test]
+fn test_all_repository_samples_parse() {
+    // Every bundled sample in `samples/` must parse cleanly against the
+    // current parser (guards against spec drift, e.g. the object_shape split).
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("samples");
+    let entries = std::fs::read_dir(&root).expect("samples/ dir");
+    let mut names: Vec<String> = entries
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| n.ends_with(".txt"))
+        .collect();
+    names.sort();
+    assert!(!names.is_empty(), "no samples found");
+    for n in &names {
+        let path = root.join(n);
+        let content = std::fs::read_to_string(&path).unwrap();
+        let res = PromptParser::parse(&content);
+        assert!(res.is_ok(), "sample {} failed to parse: {:?}", n, res.err());
+    }
+}
+
+#[test]
 fn test_parse_simple_prompt() {
     let content = r#"--
 name: test
@@ -56,7 +77,7 @@ fn test_element_ref_resolves_object_shape() {
 name: p
 params:
   server:
-    type: object
+    type: object_shape
     ofields:
       host:
         type: string
@@ -81,7 +102,7 @@ hosts
 
 #[test]
 fn test_element_ref_forward_reference_resolves() {
-    // List declared before the object it references.
+    // List declared before the object_shape it references.
     let content = r#"--
 name: p
 params:
@@ -89,7 +110,7 @@ params:
     type: list
     etype: server
   server:
-    type: object
+    type: object_shape
     ofields:
       host:
         type: string
@@ -118,7 +139,10 @@ hosts
 }
 
 #[test]
-fn test_element_ref_to_non_object_is_error() {
+fn test_element_ref_to_non_object_shape_is_error() {
+    // Referencing a declared `object` (not `object_shape`) by name is an error:
+    // only `object_shape` is referenceable via `etype`. Referencing a non-object
+    // (e.g. a string) is likewise an error.
     let content = r#"--
 name: p
 params:
@@ -135,14 +159,35 @@ hosts
 }
 
 #[test]
+fn test_element_ref_to_object_is_error() {
+    // Naming a declared `object` (not `object_shape`) via etype is an error.
+    let content = r#"--
+name: p
+params:
+  server:
+    type: object
+    ofields:
+      host:
+        type: string
+  servers:
+    type: list
+    etype: server
+--
+x
+"#;
+    let res = PromptParser::parse(content);
+    assert!(matches!(res, Err(PromptParseError::InvalidElementRef { .. })));
+}
+
+#[test]
 fn test_element_ref_cycle_is_error() {
-    // `node` is an object containing a list whose etype is `node` itself —
+    // `node` is an object_shape containing a list whose etype is `node` itself —
     // a self-referential cycle through nested fields.
     let content = r#"--
 name: p
 params:
   node:
-    type: object
+    type: object_shape
     ofields:
       children:
         type: list
@@ -542,7 +587,7 @@ fn test_option_object_etype_without_label_is_error() {
 name: p
 params:
   feature:
-    type: object
+    type: object_shape
     ofields:
       name:
         type: string
@@ -567,7 +612,7 @@ fn test_option_object_etype_with_unknown_label_field_is_error() {
 name: p
 params:
   feature:
-    type: object
+    type: object_shape
     ofields:
       name:
         type: string
@@ -591,7 +636,7 @@ fn test_option_object_etype_with_non_string_label_field_is_error() {
 name: p
 params:
   feature:
-    type: object
+    type: object_shape
     ofields:
       enabled:
         type: boolean
@@ -615,7 +660,7 @@ fn test_option_object_etype_with_label_parses() {
 name: p
 params:
   feature:
-    type: object
+    type: object_shape
     ofields:
       name:
         type: string
@@ -646,7 +691,7 @@ fn test_option_object_etype_opt_missing_label_field_is_error() {
 name: p
 params:
   feature:
-    type: object
+    type: object_shape
     ofields:
       name:
         type: string

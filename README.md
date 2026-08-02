@@ -2,6 +2,13 @@
 
 UPL is a language to define dynamic prompts which contain variables, conditionals and loops. This allows you to dynamically construct complex prompts, [see the language specification](upl-spec/upl-1.0-rfc.md). UPL files are just `.txt` or `.upl` files, see examples at `samples/` directory.
 
+UPL variables are strictly typed (`string`, `long_string`, `number`, `boolean`,
+`list`, `object`, `object_shape`, `option_single`, `option_multi`). An `object` is
+asked to the user as a parameter; an `object_shape` declares a reusable object
+shape that is never prompted for on its own — it is only collected at the site
+that references it (a `list`, `option_single`, or `option_multi` element, or
+an `object`/field that reuses it via `type: <name>`). See §3 of the RFC for details.
+
 ![preview](https://github.com/DavidValin/universal-prompt-language/raw/master/preview.gif)
 
 This project contains:
@@ -42,10 +49,11 @@ starter library so you can start browsing and building right away:
 
 - `~/.upl/prompts/` — a set of sample prompts (`analyze_argument.txt`,
   `create_a_plan.txt`, `create_rest_api.txt`, `explain_subject.txt`,
-  `review_article.txt`, `teach_foundations.txt`).
+  `implement_user_story.txt`, `review_article.txt`,
+  `teach_foundations.txt`).
 - `~/.upl/tags_db` — a pre-built tag store associating those sample prompts
   with their tags (e.g. `software development`, `planning`, `understand`,
-  `analysis`).
+  `analysis`, `review`, `teaching`).
 
 These samples are compiled into the `upl` binary itself, so they are placed
 even on a machine with no network access. The seeding happens only once: if

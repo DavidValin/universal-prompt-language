@@ -26,6 +26,7 @@ pub enum VariableType {
     Boolean,
     List,
     Object,
+    ObjectShape,
     OptionSingle,
     OptionMulti,
 }
@@ -53,15 +54,24 @@ pub struct VariableDefinition {
     pub desc: Option<String>,
     pub options: Option<Vec<VariableValue>>,
     pub element_type: Option<VariableType>,
-    /// Name of a declared `object` variable referenced via `etype: <name>`.
-    /// Resolved into `element_type`/`ofields_definitions` at parse time (see
-    /// §3.4 of the RFC). `None` after successful resolution.
+    /// Name of a declared `object_shape` variable referenced via
+    /// `etype: <name>` (RFC §3.4). Resolved into `element_type`/
+    /// `ofields_definitions` at parse time. `None` after successful resolution
+    /// (kept populated until `resolve_element_refs` runs).
     pub element_ref: Option<String>,
-    /// For `option_single`/`option_multi` with an `object` etype: the name of
-    /// a field on the referenced object whose value is shown as the menu label
-    /// for each option (RFC §3.6). Required when the etype is a referenced
-    /// object; ignored for scalar etypes.
+    /// For `option_single`/`option_multi` with an `object_shape` etype: the
+    /// name of a field on the referenced object_shape whose value is shown as
+    /// the menu label for each option (RFC §3.6). Required when the etype is a
+    /// referenced object_shape; ignored for scalar etypes and the inline
+    /// `object` etype.
     pub label: Option<String>,
+    /// Name of a declared `object_shape` variable whose `ofields` an `object`
+    /// Name of a declared `object_shape` variable referenced via
+    /// `type: <name>` (RFC §3.4.2). When set, the variable is an object whose
+    /// `ofields` are spliced in from the referenced object_shape at parse
+    /// time. Resolved into `ofields_definitions`. Kept populated for
+    /// downstream consumers.
+    pub type_ref: Option<String>,
     pub ofields_definitions: Option<VariableDefinitions>,
 }
 
@@ -154,34 +164,40 @@ pub enum PromptParseError {
     ExpectedButGot { expected: String, got: String },
     #[error("Invalid indentation: expected {expected} spaces but got {actual}")]
     IndentationError { expected: usize, actual: usize },
-    #[error("Nested 'ofields' must only appear in 'object' type")]
+    #[error("Nested 'ofields' must only appear in 'object' or 'object_shape' type")]
     InvalidNestedInNonObject { field: String },
     #[error("Field '{field}' has invalid type '{value}'")]
     InvalidTypeField { field: String, value: String },
     #[error("Missing 'etype' for type '{type_name}'")]
     MissingElementType { type_name: String },
-    #[error("Element reference '{name}' does not resolve to a declared object variable")]
+    #[error("Element reference '{name}' does not resolve to a declared variable")]
     UnresolvedElementRef { name: String },
-    #[error("Element reference '{name}' must point to an 'object' variable with 'ofields'")]
+    #[error("Element reference '{name}' must point to an 'object_shape' variable with 'ofields' (referencing an 'object' is not allowed; only object_shape is referenceable by name)")]
     InvalidElementRef { name: String },
+    #[error("`type: {name}` must name a declared `object_shape` variable with `ofields` (referencing an `object` is not allowed; built-in type names are reserved)")]
+    InvalidTypeRef { name: String },
     #[error("Circular element reference involving '{name}'")]
     CircularElementRef { name: String },
     #[error("Option list 'opts' only allowed for 'option_single' and 'option_multi'")]
     InvalidOptsForType,
     #[error("Option type '{0}' requires an 'opts' list with at least two entries")]
     MissingOpts(String),
-    #[error("Invalid etype '{etype}' for option type '{kind}': allowed etypes are string, long_string, number, or a referenced object")]
+    #[error("Invalid etype '{etype}' for option type '{kind}': allowed etypes are string, long_string, number, object (inline), or a referenced object_shape")]
     InvalidOptionEtype { etype: String, kind: String },
     #[error("Option entry #{index} does not match etype '{etype}': {value}")]
     OptionEntryTypeMismatch { index: usize, etype: String, value: String },
-    #[error("Option 'label' is only allowed for 'option_single' and 'option_multi' with an object etype")]
+    #[error("Option 'label' is only allowed for 'option_single' and 'option_multi' with an object_shape etype")]
     InvalidLabelForType,
-    #[error("Option 'label' is required for '{path}' because etype is a referenced object")]
+    #[error("Option 'label' is required for '{path}' because etype is a referenced object_shape")]
     MissingLabelForObjectEtype { path: String },
-    #[error("Option 'label' field '{label}' is not declared on referenced object '{obj}'")]
+    #[error("Option 'label' field '{label}' is not declared on referenced object_shape '{obj}'")]
     UnknownLabelField { label: String, obj: String },
-    #[error("Option 'label' field '{label}' on object '{obj}' must be string or long_string, got {got:?}")]
+    #[error("Option 'label' field '{label}' on object_shape '{obj}' must be string or long_string, got {got:?}")]
     InvalidLabelFieldType { label: String, obj: String, got: VariableType },
+    #[error("'ofields' is only allowed on 'object' and 'object_shape' types (got {type_name})")]
+    InvalidOfieldsForType { type_name: String },
+    #[error("'object_shape' variable '{name}' requires an 'ofields' block")]
+    ObjectShapeMissingOfields { name: String },
     #[error("Invalid value for 'def': {value} (expected type: {expected_type:?})")]
     InvalidDefaultValue { value: String, expected_type: VariableType },
     #[error("Default for '{path}' (type {declared:?}) has wrong value kind: {value}")]
@@ -510,9 +526,13 @@ impl PromptParser {
 
         ctx.pos = new_pos;
 
-        // Resolve element references (`etype: <object>`, RFC §3.4) now that
-        // all top-level variable definitions are known.
-        Self::resolve_element_refs(&mut var_defs)?;
+        // Resolve element references (`etype: <object_shape>`, RFC §3.4) and
+        // `type: <name>` inheritances (RFC §3.4.2) now that
+        // all top-level variable definitions are known. Inheritance also
+        // copies the referenced object_shape's field `def` defaults into the
+        // inheriting object's dotted path so `render_with_defaults` resolves
+        // them under the inheriting object.
+        Self::resolve_element_refs(&mut var_defs, &mut defaults)?;
 
         // Validate cross-field consistency (opts/etype/label/def) now that
         // element references have been resolved into
@@ -528,32 +548,37 @@ impl PromptParser {
         Ok((var_defs, defaults))
     }
 
-    /// Recursively resolve `element_ref` entries (RFC §3.4) against the
-    /// top-level `root` definitions. A reference copies the referenced
-    /// `object` variable's `ofields` (deep, with its own nested refs resolved)
-    /// into the referring definition and sets `element_type = Object`.
+    /// Recursively resolve `element_ref` entries (RFC §3.4) and
+    /// `type: <name>` references (RFC §3.4.2) against the top-level `root`
+    /// definitions. A by-name `etype` reference copies the referenced
+    /// `object_shape` variable's `ofields` (deep, with its own nested refs
+    /// resolved) into the referring definition and sets
+    /// `element_type = Object`. An `type: <name>` inheritance
+    /// on an `object` copies the referenced `object_shape`'s `ofields` into the
+    /// object's `ofields_definitions`, AND copies the object_shape's field
+    /// `def` defaults into the inheriting object's dotted path so
+    /// `render_with_defaults` resolves them under the inheriting object.
     /// `visiting` tracks ref names on the current resolution path to detect
     /// cycles. References are case-insensitive, matching placeholder lookup.
     fn resolve_element_refs(
         defs: &mut VariableDefinitions,
+        defaults: &mut VariableDefaults,
     ) -> Result<(), PromptParseError> {
-        // Build a snapshot of the top-level definitions to look up targets.
-        // Targets are looked up by name (case-insensitive). We resolve `defs`
-        // in place; nested refs inside cloned subtrees are resolved by the
-        // recursive `resolve_subtree` call.
         let root_snapshot: Vec<(String, VariableDefinition)> =
             defs.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         let mut visiting: HashSet<String> = HashSet::new();
-        for (_, def) in defs.iter_mut() {
-            Self::resolve_one(def, &root_snapshot, &mut visiting)?;
+        for (name, def) in defs.iter_mut() {
+            Self::resolve_one(def, name, &root_snapshot, &mut visiting, defaults)?;
         }
         Ok(())
     }
 
     fn resolve_one(
         def: &mut VariableDefinition,
+        path: &str,
         root: &[(String, VariableDefinition)],
         visiting: &mut HashSet<String>,
+        defaults: &mut VariableDefaults,
     ) -> Result<(), PromptParseError> {
         // First resolve any element reference on this definition itself.
         // `element_ref` is kept populated after resolution so downstream
@@ -571,13 +596,16 @@ impl PromptParser {
                 })?;
             let target_name = target_entry.0.clone();
             let target = &target_entry.1;
-            if target.r#type != VariableType::Object || target.ofields_definitions.is_none() {
+            // Only `object_shape` is referenceable by name (RFC §3.4). Naming a
+            // declared `object` (or any non-object_shape) is an error.
+            if target.r#type != VariableType::ObjectShape || target.ofields_definitions.is_none() {
                 return Err(PromptParseError::InvalidElementRef { name: refname });
             }
             visiting.insert(key);
             let mut nested = target.ofields_definitions.clone().unwrap();
-            for (_, nd) in nested.iter_mut() {
-                Self::resolve_one(nd, root, visiting)?;
+            for (fname, nd) in nested.iter_mut() {
+                let npath = format!("{}.{}", path, fname);
+                Self::resolve_one(nd, &npath, root, visiting, defaults)?;
             }
             visiting.remove(&refname.to_lowercase());
             // Normalize the ref to the target's declared name so downstream
@@ -586,11 +614,65 @@ impl PromptParser {
             def.element_type = Some(VariableType::Object);
             def.ofields_definitions = Some(nested);
         }
-        // Then recurse into this definition's own ofields (a nested list
-        // field may itself use an element reference).
-        if let Some(nested) = def.ofields_definitions.as_mut() {
-            for (_, nd) in nested.iter_mut() {
-                Self::resolve_one(nd, root, visiting)?;
+        // Resolve a `type: <object_shape_name>` reference (RFC §3.4.2):
+        // splices the referenced object_shape's ofields in as this object's
+        // own ofields, and copies the object_shape's field defaults into this
+        // object's dotted path so `render_with_defaults` resolves them here.
+        if let Some(refname) = def.type_ref.clone() {
+            let key = refname.to_lowercase();
+            if visiting.contains(&key) {
+                return Err(PromptParseError::CircularElementRef { name: refname });
+            }
+            let target_entry = root
+                .iter()
+                .find(|(k, _)| k.to_lowercase() == key)
+                .ok_or(PromptParseError::InvalidTypeRef {
+                    name: refname.clone(),
+                })?;
+            let target_name = target_entry.0.clone();
+            let target = &target_entry.1;
+            if target.r#type != VariableType::ObjectShape || target.ofields_definitions.is_none() {
+                return Err(PromptParseError::InvalidTypeRef { name: refname });
+            }
+            visiting.insert(key);
+            let mut nested = target.ofields_definitions.clone().unwrap();
+            for (fname, nd) in nested.iter_mut() {
+                let npath = format!("{}.{}", path, fname);
+                Self::resolve_one(nd, &npath, root, visiting, defaults)?;
+            }
+            visiting.remove(&refname.to_lowercase());
+            def.type_ref = Some(target_name.clone());
+            def.ofields_definitions = Some(nested);
+            // Copy the object_shape's field defaults (every key starting with
+            // `<target_name>.`) into this object's path, re-keyed under
+            // `<path>.`.
+            let src_prefix = format!("{}.", target_name);
+            let copies: Vec<(String, VariableValue)> = defaults
+                .iter()
+                .filter_map(|(k, v)| {
+                    if k.starts_with(&src_prefix) {
+                        let rest = &k[src_prefix.len()..];
+                        Some((format!("{}.{}", path, rest), v.clone()))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for (k, v) in copies {
+                defaults.entry(k).or_insert(v);
+            }
+        }
+        // Then recurse into this definition's own ofields — but only when the
+        // ofields were declared inline (no element_ref / type_ref was just
+        // resolved). When a ref was resolved, the splice above already
+        // recursed into the (cloned) nested ofields with path tracking, so
+        // re-recursing here would only redundantly re-resolve them.
+        if def.element_ref.is_none() && def.type_ref.is_none() {
+            if let Some(nested) = def.ofields_definitions.as_mut() {
+                for (fname, nd) in nested.iter_mut() {
+                    let npath = format!("{}.{}", path, fname);
+                    Self::resolve_one(nd, &npath, root, visiting, defaults)?;
+                }
             }
         }
         Ok(())
@@ -644,6 +726,7 @@ impl PromptParser {
                 element_type: None,
                 element_ref: None,
                 label: None,
+                type_ref: None,
                 ofields_definitions: None,
             };
 
@@ -674,7 +757,21 @@ impl PromptParser {
                 let (pk, pv) = extract_kv(pstripped)?;
                 match pk.as_str() {
                     "type" => {
-                        def.r#type = Self::parse_type(pv.trim(), "type")?;
+                        // `type` accepts either a built-in type name (§3.1)
+                        // or the name of a declared `object_shape` variable
+                        // (RFC §3.4.2). A non-builtin name is recorded in
+                        // `type_ref` and `r#type` is tentatively set to
+                        // `Object`; resolution later splices in the
+                        // referenced object_shape's `ofields` and confirms
+                        // the target exists and is an `object_shape`.
+                        let v = pv.trim();
+                        match Self::parse_type(v, "type") {
+                            Ok(t) => def.r#type = t,
+                            Err(_) => {
+                                def.type_ref = Some(v.to_string());
+                                def.r#type = VariableType::Object;
+                            }
+                        }
                         pos += 1;
                     }
                     "etype" => {
@@ -803,6 +900,17 @@ impl PromptParser {
                         }
                     }
                     "ofields" => {
+                        // `ofields` is the inline field map. It may be empty
+                        // (the indented `ofields` block follows) or `{}`.
+                        // Shape reuse uses `type: <object_shape_name>` (§3.4.2),
+                        // not `ofields`; the two are mutually exclusive (a
+                        // `type: <name>` reference has no inline `ofields`).
+                        if def.type_ref.is_some() {
+                            return Err(PromptParseError::InvalidOfieldsForType {
+                                type_name:
+                                    "object (cannot have both `type: <shape>` and `ofields`)".into(),
+                            });
+                        }
                         pos += 1; // move past the "ofields:" line
                         let mut nested_defs = VariableDefinitions::new();
                         let new_pos = Self::parse_definitions_block(
@@ -874,6 +982,69 @@ impl PromptParser {
     ) -> Result<(), PromptParseError> {
         use VariableType::*;
         let is_option = matches!(def.r#type, OptionSingle | OptionMulti);
+
+        // `ofields` (inline `ofields_definitions`) and/or a `type_ref`
+        // (shape reuse via `type: <object_shape_name>`) are allowed on:
+        //   - `object` / `object_shape` (their own shape), and
+        //   - `list` / `option_single` / `option_multi` when `etype` is the
+        //     inline `object` (the inline element shape, RFC §4.1.1).
+        let has_ofields = def.ofields_definitions.is_some() || def.type_ref.is_some();
+        if has_ofields
+            && !matches!(
+                def.r#type,
+                Object | ObjectShape | List | OptionSingle | OptionMulti
+            )
+        {
+            return Err(PromptParseError::InvalidOfieldsForType {
+                type_name: format!("{:?}", def.r#type).to_lowercase(),
+            });
+        }
+
+        // `type_ref` (shape reuse) is only valid on `object` — and is mutually
+        // exclusive with inline `ofields` (the referenced object_shape
+        // provides the fields). `r#type` is set to `Object` during parse when
+        // `type_ref` is recorded, so this also rejects a `type_ref` mistakenly
+        // set on a non-object.
+        if def.type_ref.is_some() {
+            if def.r#type != Object {
+                return Err(PromptParseError::InvalidOfieldsForType {
+                    type_name: format!("{:?}", def.r#type).to_lowercase(),
+                });
+            }
+            // A `type: <name>` object must NOT also declare inline `ofields`.
+            // (After resolution `ofields_definitions` holds the spliced shape,
+            // so this check runs against the parse-time state captured on the
+            // definition: if both were declared, both `type_ref` and
+            // `ofields_definitions` are `Some` *before* resolution. We can't
+            // re-detect post-resolution, so we also guard at parse time in the
+            // `ofields:` key handler.)
+        }
+
+        // An `object_shape` must declare an inline `ofields` block (it cannot
+        // reuse a shape via `type: <name>` — that form is for `object` only).
+        if def.r#type == ObjectShape && def.ofields_definitions.is_none() {
+            return Err(PromptParseError::ObjectShapeMissingOfields {
+                name: path.to_string(),
+            });
+        }
+
+        // An `object` must have an `ofields` (inline or via `type: <name>`).
+        // After resolution, `ofields_definitions` is populated in both cases.
+        if def.r#type == Object && !has_ofields {
+            return Err(PromptParseError::InvalidOfieldsForType {
+                type_name: "object".into(),
+            });
+        }
+
+        // `etype`/`element_ref` only on list/option_* (not object/object_shape).
+        if (def.element_type.is_some() || def.element_ref.is_some())
+            && !matches!(def.r#type, List | OptionSingle | OptionMulti)
+        {
+            return Err(PromptParseError::InvalidOptionEtype {
+                etype: "etype".into(),
+                kind: format!("{:?}", def.r#type).to_lowercase(),
+            });
+        }
 
         // Type-check the `def` value (RFC §3.3): a `def` whose `VariableValue`
         // kind does not match the declared `type`/`element_type` is a parse
@@ -1056,6 +1227,7 @@ impl PromptParser {
             (T::Number, V::Number(_)) => true,
             (T::Boolean, V::Boolean(_)) => true,
             (T::Object, V::Object(_)) => true,
+            (T::ObjectShape, V::Object(_)) => true,
             (T::List, V::List(items)) => {
                 // Every element must match the list's etype. For object etype
                 // (resolved from a reference), each element must be an object.
@@ -1111,6 +1283,7 @@ impl PromptParser {
             "boolean" => VariableType::Boolean,
             "list" => VariableType::List,
             "object" => VariableType::Object,
+            "object_shape" => VariableType::ObjectShape,
             "option_single" => VariableType::OptionSingle,
             "option_multi" => VariableType::OptionMulti,
             other => {
@@ -1309,10 +1482,10 @@ impl PromptParser {
     /// `Scalar(etype)`.
     fn shape_of(def: &VariableDefinition) -> Shape<'_> {
         match def.r#type {
-            VariableType::Object => Shape::Object(
+            VariableType::Object | VariableType::ObjectShape => Shape::Object(
                 def.ofields_definitions
                     .as_ref()
-                    .expect("object has ofields after validation"),
+                    .expect("object/object_shape has ofields after validation"),
             ),
             VariableType::List | VariableType::OptionSingle | VariableType::OptionMulti => {
                 let is_object_etype = def.element_type == Some(VariableType::Object)
