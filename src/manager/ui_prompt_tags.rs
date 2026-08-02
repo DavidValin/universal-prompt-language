@@ -10,10 +10,11 @@
 //
 // Keys:
 //   ↑/Down   navigate the tag list
-//   Enter    toggle attachment of the selected tag (when input is empty),
-//            or create + attach the tag typed in "New Tag:" (when non-empty)
+//   Space   toggle attachment of the selected tag
+//   n       start entering a new tag (then type, Enter to save & attach,
+//            Esc to cancel before saving)
 //   Del      disassociate the selected tag from this prompt
-//   q/Esc    back to the prompt list
+//   q/Esc    back to the prompt list (or cancel new-tag input if active)
 
 use std::io::Write;
 
@@ -43,6 +44,7 @@ pub fn run_tui<W: Write>(
     let mut store = TagStore::load()?;
 
     let mut input: String = String::new();
+    let mut input_mode: bool = false;
     let mut selected: usize = 0;
     let (mut cols, mut lines) =
         terminal::size().map_err(|e| TagsError::Tui(e.to_string()))?;
@@ -58,7 +60,7 @@ pub fn run_tui<W: Write>(
                 selected = all_tags.len() - 1;
             }
 
-            render(stdout, &store, &all_tags, &sha256, prompt_id, prompt_title, &input, selected, cols, lines)?;
+            render(stdout, &store, &all_tags, &sha256, prompt_id, prompt_title, &input, input_mode, selected, cols, lines)?;
 
             stdout.flush().map_err(|e| TagsError::Tui(e.to_string()))?;
 
@@ -76,35 +78,50 @@ pub fn run_tui<W: Write>(
                     }
                     KeyCode::Home => selected = 0,
                     KeyCode::End => selected = all_tags.len().saturating_sub(1),
-                    KeyCode::Delete | KeyCode::Backspace
-                        if !all_tags.is_empty() && !input_focus_has_text(&input) =>
-                    {
-                        // Del detaches the selected tag.
-                        // Backspace only detaches when the input is empty,
-                        // otherwise it edits the input.
-                        if let Some(name) = all_tags.get(selected).cloned() {
-                            store.disassociate(&name, &sha256);
-                            store.save()?;
+                    KeyCode::Esc => {
+                        if input_mode {
+                            // Cancel new-tag input without saving.
+                            input_mode = false;
+                            input.clear();
+                        } else {
+                            return Ok(());
                         }
                     }
-                    KeyCode::Backspace => {
+                    KeyCode::Char('q') | KeyCode::Char('Q') if !input_mode => {
+                        return Ok(());
+                    }
+                    // Behaviour while entering a new tag:
+                    KeyCode::Backspace if input_mode => {
                         input.pop();
                     }
-                    KeyCode::Enter => {
-                        if input_focus_has_text(&input) {
-                            let name = input.trim().to_string();
-                            if !name.is_empty() {
-                                store.ensure_tag(&name);
-                                store.associate(&name, &sha256);
-                                store.save()?;
-                                input.clear();
-                                selected = store
-                                    .tag_names_sorted()
-                                    .iter()
-                                    .position(|t| t == &name)
-                                    .unwrap_or(selected);
-                            }
-                        } else if let Some(name) = all_tags.get(selected).cloned() {
+                    KeyCode::Enter if input_mode => {
+                        let name = input.trim().to_string();
+                        if !name.is_empty() {
+                            store.ensure_tag(&name);
+                            store.associate(&name, &sha256);
+                            store.save()?;
+                            input.clear();
+                            input_mode = false;
+                            selected = store
+                                .tag_names_sorted()
+                                .iter()
+                                .position(|t| t == &name)
+                                .unwrap_or(selected);
+                        } else {
+                            input_mode = false;
+                            input.clear();
+                        }
+                    }
+                    KeyCode::Char(c) if input_mode => {
+                        input.push(c);
+                    }
+                    // Behaviour while navigating the tag list (not in input mode):
+                    KeyCode::Char('n') | KeyCode::Char('N') => {
+                        input_mode = true;
+                        input.clear();
+                    }
+                    KeyCode::Char(' ') if !input_mode && !all_tags.is_empty() => {
+                        if let Some(name) = all_tags.get(selected).cloned() {
                             if store.tag_has(&name, &sha256) {
                                 store.disassociate(&name, &sha256);
                             } else {
@@ -114,10 +131,13 @@ pub fn run_tui<W: Write>(
                             store.save()?;
                         }
                     }
-                    KeyCode::Esc => return Ok(()),
-                    KeyCode::Char('q') | KeyCode::Char('Q') => return Ok(()),
-                    KeyCode::Char(c) => {
-                        input.push(c);
+                    KeyCode::Delete | KeyCode::Backspace
+                        if !input_mode && !all_tags.is_empty() =>
+                    {
+                        if let Some(name) = all_tags.get(selected).cloned() {
+                            store.disassociate(&name, &sha256);
+                            store.save()?;
+                        }
                     }
                     _ => {}
                 },
@@ -146,6 +166,7 @@ fn render<W: Write>(
     prompt_id: &str,
     prompt_title: &str,
     input: &str,
+    input_mode: bool,
     selected: usize,
     cols: u16,
     lines: u16,
@@ -228,7 +249,10 @@ fn render<W: Write>(
     // Tags checklist
     let list_top = y;
     let available = lines.saturating_sub(list_top) as usize; // remaining lines including footer
-    let list_h = available.saturating_sub(2).max(1); // reserve 2 for input + footer
+    // Reserve one line for the input row only while entering a new tag; always
+    // reserve one line for the footer.
+    let reserved = if input_mode { 2 } else { 1 };
+    let list_h = available.saturating_sub(reserved).max(1);
 
     let top = if selected < list_h {
         0
@@ -241,7 +265,7 @@ fn render<W: Write>(
             stdout,
             cursor::MoveTo(INDENT, list_top),
             SetForegroundColor(Color::DarkGrey),
-            Print("(no tags yet — type one below)"),
+            Print("(no tags yet — press 'n' to add one)",),
             ResetColor
         )?;
     } else {
@@ -271,25 +295,30 @@ fn render<W: Write>(
         }
     }
 
-    // New Tag input
+    // New Tag input — only shown once the user starts adding one (presses 'n').
     let input_y = list_top + list_h as u16;
-    queue!(
-        stdout,
-        cursor::MoveTo(INDENT, input_y),
-        Clear(ClearType::CurrentLine),
-        SetAttribute(Attribute::Bold),
-        SetForegroundColor(Color::Green),
-        Print("New Tag: "),
-        SetAttribute(Attribute::Reset),
-        ResetColor,
-        SetForegroundColor(Color::White),
-        Print(input),
-        ResetColor
-    )?;
+    queue!(stdout, cursor::MoveTo(INDENT, input_y), Clear(ClearType::CurrentLine))?;
+    if input_mode {
+        queue!(
+            stdout,
+            SetAttribute(Attribute::Bold),
+            SetForegroundColor(Color::Green),
+            Print("New Tag: "),
+            SetAttribute(Attribute::Reset),
+            ResetColor,
+            SetForegroundColor(Color::White),
+            Print(input),
+            ResetColor
+        )?;
+    }
 
     // Footer
     let footer_y = lines.saturating_sub(1);
-    let footer = "↑/↓ navigate · Enter toggle / add new · Del remove · q/Esc back";
+    let footer = if input_mode {
+        "type tag · Enter save & attach · Esc cancel"
+    } else {
+        "↑/↓ navigate · Space toggle · n new · Del remove · q/Esc back"
+    };
     queue!(
         stdout,
         cursor::MoveTo(INDENT, footer_y),
@@ -299,9 +328,13 @@ fn render<W: Write>(
         ResetColor
     )?;
 
-    // Position cursor at end of "New Tag:" input
-    let x = INDENT + "New Tag: ".chars().count() as u16 + input.chars().count() as u16;
-    queue!(stdout, cursor::MoveTo(x, input_y))?;
+    // Position cursor at end of "New Tag:" input only while entering a tag.
+    if input_mode {
+        let x = INDENT + "New Tag: ".chars().count() as u16 + input.chars().count() as u16;
+        queue!(stdout, cursor::MoveTo(x, input_y), cursor::Show)?;
+    } else {
+        queue!(stdout, cursor::Hide)?;
+    }
 
     Ok(())
 }
