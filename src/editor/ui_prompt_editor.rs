@@ -4,12 +4,16 @@
 //
 // Layout:
 //   ┌───────────────────────────────────────┬───────────────┐
-//   │ editable content (scrollable)         │  VARIABLES    │
-//   │  - placeholders: yellow bg / black fg │  var1         │
-//   │  - for blocks:   dark grey bg         │  var2         │
-//   │  - if blocks:    light grey bg        │  ...          │
+//   │ editable content (scrollable)          │  VALID /      │
+//   │  - placeholders: yellow bg / black fg │  INVALID      │
+//   │  - for blocks:   dark grey bg         │  var1         │
+//   │  - if blocks:    light grey bg        │  var2         │
+//   │                                       │  ...          │
+//   │  (when INVALID, the sidebar shows the │  (when        │
+//   │   wrapped parse errors instead of the │   INVALID,    │
+//   │   variable list)                      │   errors)     │
 //   ├───────────────────────────────────────┴───────────────┘
-//   │ VALID (green/black) or INVALID (red/black)            │
+//   │ Ctrl+S save · Ctrl+R UPL Help · Esc quit                │
 //   └───────────────────────────────────────────────────────┘
 //
 // Keys:
@@ -445,33 +449,31 @@ impl Editor {
         self.content_w() + 2
     }
 
-    /// Wrap the stored parse errors to the current content width, producing
-    /// one string per display line. Empty when the prompt is valid.
+    /// Wrap the stored parse errors to the sidebar inner width, producing
+    /// one string per display line. Empty when the prompt is valid. Errors
+    /// are shown in the sidebar (instead of variable names) when invalid.
     fn error_lines(&self) -> Vec<String> {
-        let cw = self.content_w();
-        if cw == 0 || self.errors.is_empty() {
+        let sw = self.sidebar_w().saturating_sub(2);
+        if sw == 0 || self.errors.is_empty() {
             return Vec::new();
         }
         let mut out = Vec::new();
         for err in &self.errors {
-            for chunk in wrap_text(err, cw) {
+            for chunk in wrap_text(err, sw) {
                 out.push(chunk);
             }
         }
         out
     }
 
-    /// Height of the editable region. When invalid, the bottom of the content
-    /// pane is reserved for error lines (capped so at least one edit row and
-    /// at most half the inner area are kept for errors).
-    fn edit_height(&self, err_h: usize) -> usize {
-        let inner = self.inner_height();
-        let e = err_h.min(inner.saturating_sub(1)).min(inner / 2);
-        inner.saturating_sub(e)
+    /// Height of the editable region. The full inner height is available for
+    /// editing; error messages render in the sidebar, not the content pane.
+    fn edit_height(&self, _err_h: usize) -> usize {
+        self.inner_height()
     }
 
     fn current_edit_height(&self) -> usize {
-        self.edit_height(self.error_lines().len())
+        self.inner_height()
     }
 
     fn scroll_to_cursor(&mut self, edit_h: usize) {
@@ -507,6 +509,7 @@ impl Editor {
 
         let bgs = compute_block_bgs(&self.lines);
         let is_header = compute_header_flags(&self.lines);
+        let is_param_name = compute_param_name_flags(&self.lines);
 
         // Hide the cursor while we repaint so it doesn't visibly jump to
         // every cell during the draw; it is re-shown at the edit position
@@ -540,35 +543,23 @@ impl Editor {
             )?;
             // content
             queue!(stdout, cursor::MoveTo(cx0 as u16, y))?;
-            if vi < edit_h {
-                let li = self.top + vi;
-                if li < self.lines.len() {
-                    render_line(
-                        stdout,
-                        &self.lines[li],
-                        bgs[li],
-                        is_header[li],
-                        self.left,
-                        cw,
-                    )?;
-                } else {
-                    // empty line: fill with default bg
-                    queue!(
-                        stdout,
-                        SetForegroundColor(Color::White),
-                        Print(" ".repeat(cw)),
-                        ResetColor
-                    )?;
-                }
+            let li = self.top + vi;
+            if li < self.lines.len() {
+                render_line(
+                    stdout,
+                    &self.lines[li],
+                    bgs[li],
+                    is_header[li],
+                    is_param_name[li],
+                    self.left,
+                    cw,
+                )?;
             } else {
-                // error region: render wrapped errors in red, one per line.
-                let ei = vi - edit_h;
-                let cell = wrapped_errors.get(ei).map(|s| s.as_str()).unwrap_or("");
+                // empty line: fill with default bg
                 queue!(
                     stdout,
-                    SetBackgroundColor(Color::Reset),
-                    SetForegroundColor(Color::Red),
-                    Print(pad_to(cell, cw)),
+                    SetForegroundColor(Color::White),
+                    Print(" ".repeat(cw)),
                     ResetColor
                 )?;
             }
@@ -582,7 +573,7 @@ impl Editor {
             )?;
             // sidebar
             queue!(stdout, cursor::MoveTo(sx0 as u16, y))?;
-            self.render_sidebar_line(stdout, vi, sw)?;
+            self.render_sidebar_line(stdout, vi, sw, &wrapped_errors)?;
             // right border
             queue!(
                 stdout,
@@ -609,27 +600,6 @@ impl Editor {
 
         // ---- status bar ----
         queue!(stdout, cursor::MoveTo(0, self.status_y()), Clear(ClearType::CurrentLine))?;
-        if self.valid {
-            queue!(
-                stdout,
-                SetBackgroundColor(Color::Green),
-                SetForegroundColor(Color::Black),
-                SetAttribute(Attribute::Bold),
-                Print(" VALID "),
-                ResetColor,
-                SetAttribute(Attribute::Reset)
-            )?;
-        } else {
-            queue!(
-                stdout,
-                SetBackgroundColor(Color::Red),
-                SetForegroundColor(Color::Black),
-                SetAttribute(Attribute::Bold),
-                Print(" INVALID "),
-                ResetColor,
-                SetAttribute(Attribute::Reset)
-            )?;
-        }
         let hint = if self.message.is_empty() {
             "  Ctrl+S save · Ctrl+R UPL Help · Esc quit".to_string()
         } else {
@@ -655,16 +625,21 @@ impl Editor {
 /// column 1 within the sidebar.
 ///
 /// Row layout inside the sidebar:
-///   vi == 0 : " VARIABLES" header (white, bold, no background)
+///   vi == 0 : status badge header — "VALID" (green bg / black fg, bold) when
+///             the prompt parses, or "INVALID" (red bg / black fg, bold) when
+///             it does not. Replaces the old bottom status badge.
 ///   vi == 1 : empty line
-///   vi >= 2 : a variable block (3 rows): name (yellow bg / black fg, with a
-///             leading and trailing space inside the background), its type
-///             (white, no background), and a blank separator row.
+///   vi >= 2 : when VALID, a variable block (3 rows): name (yellow bg / black
+///             fg, with a leading and trailing space inside the background),
+///             its type (white, no background), and a blank separator row.
+///             When INVALID, the wrapped parse-error lines (red) take over
+///             the variable rows so the user sees what is wrong.
 fn render_sidebar_line<W: Write>(
     &self,
     stdout: &mut W,
     vi: usize,
     w: usize,
+    errors: &[String],
 ) -> io::Result<()> {
     if w < 2 {
         return Ok(());
@@ -681,14 +656,32 @@ fn render_sidebar_line<W: Write>(
 
     match vi {
         0 => {
+            // Status badge header (moved here from the bottom status bar).
+            let (label, bg) = if self.valid {
+                ("VALID", Color::Green)
+            } else {
+                ("INVALID", Color::Red)
+            };
+            let label = format!(" {label} ");
+            let label_w = label.chars().count().min(inner_w);
+            let label: String = label.chars().take(label_w).collect();
             queue!(
                 stdout,
-                SetForegroundColor(Color::White),
+                SetBackgroundColor(bg),
+                SetForegroundColor(Color::Black),
                 SetAttribute(Attribute::Bold),
-                Print(pad_to("VARIABLES", inner_w)),
+                Print(&label),
                 ResetColor,
                 SetAttribute(Attribute::Reset)
             )?;
+            if label_w < inner_w {
+                queue!(
+                    stdout,
+                    SetForegroundColor(Color::White),
+                    Print(" ".repeat(inner_w - label_w)),
+                    ResetColor
+                )?;
+            }
         }
         1 => {
             queue!(
@@ -699,60 +692,72 @@ fn render_sidebar_line<W: Write>(
             )?;
         }
         _ => {
-            let idx = (vi - 2) / ROWS_PER_VAR;
-            let sub = (vi - 2) % ROWS_PER_VAR;
-            let n = self.var_names.len();
-            if idx >= n {
-                queue!(
-                    stdout,
-                    SetForegroundColor(Color::White),
-                    Print(" ".repeat(inner_w)),
-                    ResetColor
-                )?;
-            } else {
-                let (name, vtype) = &self.var_names[idx];
-                match sub {
-                    0 => {
-                        // Variable name with a leading and trailing space,
-                        // all inside the yellow background. The background
-                        // ends right after the trailing space.
-                        let label = format!(" {} ", name);
-                        let label_w = label.chars().count().min(inner_w);
-                        let label: String = label.chars().take(label_w).collect();
-                        queue!(
-                            stdout,
-                            SetBackgroundColor(Color::Yellow),
-                            SetForegroundColor(Color::Black),
-                            Print(&label),
-                            ResetColor
-                        )?;
-                        if label_w < inner_w {
+            if self.valid {
+                let idx = (vi - 2) / ROWS_PER_VAR;
+                let sub = (vi - 2) % ROWS_PER_VAR;
+                let n = self.var_names.len();
+                if idx >= n {
+                    queue!(
+                        stdout,
+                        SetForegroundColor(Color::White),
+                        Print(" ".repeat(inner_w)),
+                        ResetColor
+                    )?;
+                } else {
+                    let (name, vtype) = &self.var_names[idx];
+                    match sub {
+                        0 => {
+                            // Variable name with a leading and trailing space,
+                            // all inside the yellow background. The background
+                            // ends right after the trailing space.
+                            let label = format!(" {} ", name);
+                            let label_w = label.chars().count().min(inner_w);
+                            let label: String = label.chars().take(label_w).collect();
+                            queue!(
+                                stdout,
+                                SetBackgroundColor(Color::Yellow),
+                                SetForegroundColor(Color::Black),
+                                Print(&label),
+                                ResetColor
+                            )?;
+                            if label_w < inner_w {
+                                queue!(
+                                    stdout,
+                                    SetForegroundColor(Color::White),
+                                    Print(" ".repeat(inner_w - label_w)),
+                                    ResetColor
+                                )?;
+                            }
+                        }
+                        1 => {
+                            let label = format!(" {}", type_name(vtype));
                             queue!(
                                 stdout,
                                 SetForegroundColor(Color::White),
-                                Print(" ".repeat(inner_w - label_w)),
+                                Print(pad_to(&label, inner_w)),
+                                ResetColor
+                            )?;
+                        }
+                        _ => {
+                            queue!(
+                                stdout,
+                                SetForegroundColor(Color::White),
+                                Print(" ".repeat(inner_w)),
                                 ResetColor
                             )?;
                         }
                     }
-                    1 => {
-                        let label = format!(" {}", type_name(vtype));
-                        queue!(
-                            stdout,
-                            SetForegroundColor(Color::White),
-                            Print(pad_to(&label, inner_w)),
-                            ResetColor
-                        )?;
-                    }
-                    _ => {
-                        queue!(
-                            stdout,
-                            SetForegroundColor(Color::White),
-                            Print(" ".repeat(inner_w)),
-                            ResetColor
-                        )?;
-                    }
                 }
+            } else {
+                // Error lines replace the variable rows when invalid.
+                let ei = vi - 2;
+                let cell = errors.get(ei).map(|s| s.as_str()).unwrap_or("");
+                queue!(
+                    stdout,
+                    SetForegroundColor(Color::Red),
+                    Print(pad_to(cell, inner_w)),
+                    ResetColor
+                )?;
             }
         }
     }
@@ -980,6 +985,7 @@ fn render_line<W: Write>(
     line: &[char],
     bg: Block,
     is_header: bool,
+    is_param_name: bool,
     left: usize,
     width: usize,
 ) -> io::Result<()> {
@@ -991,11 +997,11 @@ fn render_line<W: Write>(
     // Walk the visible window, grouping consecutive chars by style.
     let mut idx = left;
     let mut seg_buf = String::new();
-    let mut seg_style = style_at(idx, end, &spans, &key_span);
+    let mut seg_style = style_at(idx, end, &spans, &key_span, is_param_name);
     let mut written = 0usize; // visible columns emitted
 
     while idx < end {
-        let st = style_at(idx, end, &spans, &key_span);
+        let st = style_at(idx, end, &spans, &key_span, is_param_name);
         if st != seg_style {
             emit_segment(stdout, &seg_buf, seg_style, base_bg)?;
             written += seg_buf.chars().count();
@@ -1029,6 +1035,9 @@ enum SegStyle {
     Normal,
     Placeholder,
     HeaderKey,
+    /// The param-name key (a first-level variable name under `params:`).
+    /// Rendered in yellow to match the sidebar's param-name background.
+    ParamName,
 }
 
 fn style_at(
@@ -1036,6 +1045,7 @@ fn style_at(
     end: usize,
     spans: &[(usize, usize)],
     key_span: &Option<(usize, usize)>,
+    is_param_name: bool,
 ) -> SegStyle {
     if idx >= end {
         return SegStyle::Normal;
@@ -1045,7 +1055,11 @@ fn style_at(
     }
     if let Some((a, b)) = key_span {
         if idx >= *a && idx < *b {
-            return SegStyle::HeaderKey;
+            return if is_param_name {
+                SegStyle::ParamName
+            } else {
+                SegStyle::HeaderKey
+            };
         }
     }
     SegStyle::Normal
@@ -1072,6 +1086,13 @@ fn emit_segment<W: Write>(
             Print(text),
             ResetColor
         ),
+        SegStyle::ParamName => queue!(
+            stdout,
+            SetBackgroundColor(base_bg),
+            SetForegroundColor(Color::Yellow),
+            Print(text),
+            ResetColor
+        ),
         SegStyle::Normal => queue!(
             stdout,
             SetBackgroundColor(base_bg),
@@ -1080,6 +1101,72 @@ fn emit_segment<W: Write>(
             ResetColor
         ),
     }
+}
+
+/// Mark every line whose `key:` is the name of a top-level param (a
+/// first-level variable definition under `params:`). These keys are rendered
+/// in yellow to match the sidebar's param-name background.
+fn compute_param_name_flags(lines: &[Vec<char>]) -> Vec<bool> {
+    let mut out = vec![false; lines.len()];
+    // Header section bounds (same logic as `compute_header_flags`).
+    let mut start = 0usize;
+    if !lines.is_empty() {
+        let s: String = lines[0].iter().collect();
+        if s.trim() == "--" {
+            start = 1;
+        }
+    }
+    let mut end = lines.len();
+    for i in start..lines.len() {
+        let s: String = lines[i].iter().collect();
+        if s.trim() == "--" {
+            end = i;
+            break;
+        }
+    }
+
+    // Find the `params:` line.
+    let mut params_line = None;
+    for i in start..end {
+        if let Some((key, _)) = line_key(&lines[i]) {
+            if key == "params" {
+                params_line = Some(i);
+                break;
+            }
+        }
+    }
+    let Some(params_line) = params_line else {
+        return out;
+    };
+
+    // The first-level variables live at the shallowest indent among the
+    // non-empty lines after `params:`.
+    let mut min_indent: Option<usize> = None;
+    for i in (params_line + 1)..end {
+        let s: String = lines[i].iter().collect();
+        if s.trim().is_empty() {
+            continue;
+        }
+        let indent = lines[i].iter().take_while(|c| **c == ' ').count();
+        min_indent = Some(min_indent.map_or(indent, |m| m.min(indent)));
+    }
+    let Some(min_indent) = min_indent else {
+        return out;
+    };
+
+    // A param-name line is a `key:` line whose indent equals the minimum.
+    // Sub-properties (`type:`, `desc:`, ...) live at deeper indents.
+    for i in (params_line + 1)..end {
+        let line = &lines[i];
+        let indent = line.iter().take_while(|c| **c == ' ').count();
+        if indent != min_indent {
+            continue;
+        }
+        if line_key(line).is_some() {
+            out[i] = true;
+        }
+    }
+    out
 }
 
 /// For a header/params line, return the span `(start, end)` covering the
@@ -1101,6 +1188,30 @@ fn header_key_span(line: &[char]) -> Option<(usize, usize)> {
     }
     if i < line.len() && line[i] == ':' {
         Some((0, i + 1))
+    } else {
+        None
+    }
+}
+
+/// If `line` is a `key:` line (after leading spaces), return `(key, indent)`.
+fn line_key(line: &[char]) -> Option<(String, usize)> {
+    let mut i = 0;
+    while i < line.len() && line[i] == ' ' {
+        i += 1;
+    }
+    let indent = i;
+    if i >= line.len() || !(line[i].is_ascii_alphabetic() || line[i] == '_') {
+        return None;
+    }
+    let start = i;
+    while i < line.len()
+        && (line[i].is_ascii_alphanumeric() || line[i] == '_' || line[i] == '.')
+    {
+        i += 1;
+    }
+    if i < line.len() && line[i] == ':' {
+        let key: String = line[start..i].iter().collect();
+        Some((key, indent))
     } else {
         None
     }
