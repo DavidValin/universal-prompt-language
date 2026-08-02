@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 
 use universal_prompt_language::manager::ui_prompts_list::{
-    compute_layout, pad, resolve_folder, truncate, INDENT, SEP, TRAILING, W_NAME_MAX,
+    compute_layout, pad, resolve_folder, truncate, INDENT, SEP, TRAILING, W_NAME,
 };
 
 #[test]
@@ -51,11 +51,13 @@ fn layout_fits_total_width() {
 }
 
 #[test]
-fn layout_caps_name_at_max() {
-    // Wide terminal with short titles: name is still capped at W_NAME_MAX,
-    // and the leftover width goes to the title column.
+fn layout_name_is_fixed() {
+    // The name column is always rendered fully visible up to W_NAME chars,
+    // regardless of terminal width or title length.
     let layout = compute_layout(220, 10);
-    assert_eq!(layout.w_name, W_NAME_MAX);
+    assert_eq!(layout.w_name, W_NAME);
+    let layout = compute_layout(100, 90);
+    assert_eq!(layout.w_name, W_NAME);
     let total = INDENT
         + layout.w_name
         + SEP.len()
@@ -67,14 +69,28 @@ fn layout_caps_name_at_max() {
         + SEP.len()
         + layout.w_repo
         + TRAILING;
-    assert_eq!(total, 220);
+    assert_eq!(total, 100);
 }
 
 #[test]
-fn layout_title_has_priority() {
-    // Wide terminal, very long titles: title takes the lion's share.
-    let layout = compute_layout(140, 90);
-    assert!(layout.w_title > layout.w_name);
+fn layout_fills_full_width() {
+    // The list is always responsive: regardless of how short the longest
+    // title is, the rendered line spans the full terminal width.
+    for &w in &[60usize, 100, 140, 220] {
+        let layout = compute_layout(w, 1);
+        let total = INDENT
+            + layout.w_name
+            + SEP.len()
+            + layout.w_title
+            + SEP.len()
+            + layout.w_tags
+            + SEP.len()
+            + layout.w_params
+            + SEP.len()
+            + layout.w_repo
+            + TRAILING;
+        assert_eq!(total, w, "width {w} not filled");
+    }
 }
 
 #[test]

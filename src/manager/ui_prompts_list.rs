@@ -174,8 +174,10 @@ pub const SEP: &str = " | "; // column separator
 pub const W_TAGS: usize = 5; // fixed width for the tags counter column
 const W_PARAMS: usize = 7; // fixed width for the params counter column
 const W_REPO: usize = 20; // fixed width for the repository column
-const W_NAME_MIN: usize = 8; // minimum width reserved for the name column
-pub const W_NAME_MAX: usize = 40; // maximum width the name column can grow to
+/// Fixed width reserved for the name column: the first column is always
+/// rendered fully visible up to this many characters; longer names are
+/// truncated with an ellipsis (`...`).
+pub const W_NAME: usize = 30;
 
 /// A computed column layout that always fits inside `total_width`.
 pub struct Layout {
@@ -187,30 +189,27 @@ pub struct Layout {
 }
 
 /// Compute the column widths so the five columns plus separators exactly
-/// fill `total_width`. Title has width priority: it gets the largest share
-/// of the remaining space after reserving a minimum for name and fixed chunks
-/// for tags, params and repository.
-pub fn compute_layout(total_width: usize, longest_title: usize) -> Layout {
+/// fill `total_width` (the list is always responsive and uses the full
+/// screen). The name column has a fixed width (`W_NAME`): it is always
+/// rendered fully visible up to `W_NAME` characters (longer names are
+/// truncated with `...`). Title expands to take all the remaining space
+/// after the fixed columns, so the line always fills the terminal width.
+pub fn compute_layout(total_width: usize, _longest_title: usize) -> Layout {
     // content width after the left indent and right trailing margin
     let content = total_width.saturating_sub(INDENT).saturating_sub(TRAILING);
     let sep_width = SEP.chars().count() * 4; // four separators between five cols
-    let avail = content
-        .saturating_sub(sep_width)
-        .saturating_sub(W_TAGS)
-        .saturating_sub(W_PARAMS)
-        .saturating_sub(W_REPO);
+    let fixed = sep_width + W_TAGS + W_PARAMS + W_REPO;
+    let avail = content.saturating_sub(fixed);
 
-    // Title gets priority: as much as it needs (capped at avail - W_NAME_MIN).
-    let w_title_base = longest_title.min(avail.saturating_sub(W_NAME_MIN)).max(1);
-    let w_name_raw = avail.saturating_sub(w_title_base).max(W_NAME_MIN);
-    // Cap the name column at W_NAME_MAX and hand any leftover back to title.
-    let w_name = w_name_raw.min(W_NAME_MAX);
-    let w_title = w_title_base + (w_name_raw - w_name);
+    // Name is fixed at W_NAME; title expands to fill all remaining space so
+    // the list always spans the full screen width.
+    let w_name = W_NAME;
+    let w_title = avail.saturating_sub(w_name).max(1);
 
-    // Safety clamp: on very narrow terminals the fixed columns plus the name
-    // minimum can exceed the content width. Shrink title first, then name, so
-    // the rendered line never overflows.
-    let total_cols = w_name + w_title + W_TAGS + W_PARAMS + W_REPO + sep_width;
+    // Safety clamp: on very narrow terminals the fixed columns plus W_NAME
+    // can exceed the content width. Shrink title first, then name, so the
+    // rendered line never overflows.
+    let total_cols = w_name + w_title + fixed;
     let (w_name, w_title) = if total_cols > content {
         let excess = total_cols - content;
         if w_title >= excess {
