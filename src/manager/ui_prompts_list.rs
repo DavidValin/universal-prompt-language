@@ -421,7 +421,7 @@ fn render_list<W: Write>(
 
     // Footer
     let instructions = format!(
-        "{} prompts · ↑/↓ navigate · Enter build · e edit · t filter tags · Ctrl+T prompt tags · Ctrl+R UPL Help · q/Esc quit",
+        "{} prompts · ↑/↓ navigate · Enter build · e edit · n new · t filter tags · Ctrl+T prompt tags · Ctrl+R UPL Help · q/Esc quit",
         filtered.len()
     );
     queue!(
@@ -545,6 +545,21 @@ fn run_tui(rows: &[Row]) -> Result<TuiOutcome, ListError> {
                             if saved {
                                 return Ok(TuiOutcome::Reload);
                             }
+                        }
+                    }
+                    KeyCode::Char('n') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        // Create a new prompt: open the editor with the
+                        // skeleton template. On save the editor writes the
+                        // prompt to ~/.upl/prompts/<name>.txt; reload the
+                        // list so the new file shows up.
+                        let _ = execute!(stdout, cursor::Show);
+                        let saved = ui_prompt_editor::run_editor_with_content(
+                            ui_prompt_editor::SKELETON,
+                        )
+                        .map_err(|e| ListError::Tui(e.to_string()))?;
+                        let _ = execute!(stdout, cursor::Hide);
+                        if saved {
+                            return Ok(TuiOutcome::Reload);
                         }
                     }
                     KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
