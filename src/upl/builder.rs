@@ -11,8 +11,11 @@
 // collection: `PromptBuilder::render` is a pure function over a pre-built
 // value map, which makes it straightforward to unit-test.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
+use crossterm::style::{Color, Print, ResetColor, SetForegroundColor};
+use crossterm::execute;
+use std::io::Write as _;
 use thiserror::Error;
 
 use crate::upl::parser::{
@@ -186,10 +189,19 @@ impl PromptBuilder {
     /// answers are preserved (not reset). Going back from the first parameter
     /// cancels the build.
     fn collect_values(&self) -> Result<ValueMap, BuilderError> {
+        // Object variables referenced via `etype: <name>` (by any variable,
+        // including nested `ofields`) are type definitions used only as
+        // shape templates for list/option elements. They are not collectible
+        // values and must be skipped during interactive collection;
+        // otherwise the builder would prompt for them as if they were
+        // standalone fields (which the user would perceive as phantom
+        // "item data" prompts after finishing a list).
+        let referenced = self.referenced_type_defs();
         let defs: Vec<(String, &VariableDefinition)> = self
             .prompt
             .variable_definitions
             .iter()
+            .filter(|(k, _)| !referenced.contains(&k.to_lowercase()))
             .map(|(k, v)| (k.clone(), v))
             .collect();
         let mut values: Vec<VariableValue> = Vec::with_capacity(defs.len());
@@ -221,10 +233,45 @@ impl PromptBuilder {
             }
         }
         let mut map = ValueMap::new();
+        // Seed defaults for skipped (type-definition) objects so render
+        // never reports them missing if the template happens to reference
+        // one directly.
+        for (key, def) in &self.prompt.variable_definitions {
+            if referenced.contains(&key.to_lowercase()) {
+                map.insert(key.clone(), self.default_value(key, def));
+            }
+        }
         for ((key, _), v) in defs.iter().zip(values) {
             map.insert(key.clone(), v);
         }
         Ok(map)
+    }
+
+    /// Set of top-level object variable names (lowercased) that are referenced
+    /// via `etype: <name>` by some other variable — including references
+    /// buried in nested `ofields`. These are type definitions (shape
+    /// templates for list/option elements), not collectible values, so
+    /// `collect_values` skips them.
+    fn referenced_type_defs(&self) -> HashSet<String> {
+        let mut out = HashSet::new();
+        for d in self.prompt.variable_definitions.values() {
+            Self::collect_element_refs(d, &mut out);
+        }
+        out
+    }
+
+    /// Recursively collect the names of object variables referenced via
+    /// `etype: <name>` (the `element_ref` field) on this definition and any
+    /// of its nested `ofields`.
+    fn collect_element_refs(def: &VariableDefinition, out: &mut HashSet<String>) {
+        if let Some(r) = &def.element_ref {
+            out.insert(r.to_lowercase());
+        }
+        if let Some(nested) = &def.ofields_definitions {
+            for (_, nd) in nested.iter() {
+                Self::collect_element_refs(nd, out);
+            }
+        }
     }
 
     #[allow(clippy::only_used_in_recursion)]
@@ -282,21 +329,41 @@ impl PromptBuilder {
     ) -> Result<VariableValue, BuilderError> {
         use std::io::BufRead;
         let lbl = label(path, def);
-        eprint!("{}", lbl);
+        let mut err = std::io::stderr();
+        let _ = execute!(
+            err,
+            SetForegroundColor(Color::AnsiValue(10)),
+            Print(&lbl),
+            ResetColor
+        );
         if let Some(desc) = desc(def) {
-            eprint!(" - {}", desc);
+            let _ = execute!(
+                err,
+                SetForegroundColor(Color::AnsiValue(248)),
+                Print(format!(" - {}", desc)),
+                ResetColor
+            );
         }
-        eprintln!();
+        let _ = execute!(err, Print("\n"));
         if let Some(d) = default.and_then(|v| match v {
             VariableValue::String(s) | VariableValue::LongString(s) => Some(s.clone()),
             _ => None,
         }) {
-            eprintln!("(default: leave empty to use \"{}\")", d);
+            let _ = execute!(
+                err,
+                SetForegroundColor(Color::AnsiValue(248)),
+                Print(format!("(default: leave empty to use \"{}\")\n", d)),
+                ResetColor
+            );
         }
-        eprintln!("(enter your text; finish with two consecutive lines containing only '.')");
-        eprintln!("(type ':back' as the first line to go back to the previous parameter)");
+        let _ = execute!(
+            err,
+            SetForegroundColor(Color::AnsiValue(248)),
+            Print("(enter your text; finish with two consecutive lines containing only '.')\n"),
+            Print("(type ':back' as the first line to go back to the previous parameter)\n"),
+            ResetColor
+        );
         // Flush so the prompt appears before reading.
-        use std::io::Write;
         let _ = std::io::stderr().flush();
 
         let stdin = std::io::stdin();
@@ -482,32 +549,11 @@ impl PromptBuilder {
         &self,
         path: &str,
         def: &VariableDefinition,
-        default: Option<&VariableValue>,
+        _default: Option<&VariableValue>,
     ) -> Result<VariableValue, BuilderError> {
         let etype = def
             .element_type
             .ok_or_else(|| BuilderError::TypeError(format!("list '{}' has no etype", path)))?;
-        let def_count = match default {
-            Some(VariableValue::List(l)) => l.len(),
-            _ => 0,
-        };
-        let count_lbl = format!("{} (number of items)", path);
-        let def_count_str = def_count.to_string();
-        let mut text = inquire::Text::new(&count_lbl)
-            .with_default(&def_count_str)
-            .with_validator(|s: &str| -> Result<inquire::validator::Validation, inquire::CustomUserError> {
-                if s.parse::<usize>().is_ok() {
-                    Ok(inquire::validator::Validation::Valid)
-                } else {
-                    Ok(inquire::validator::Validation::Invalid("not a number".into()))
-                }
-            });
-        let help = help_with_back(def);
-        text = text.with_help_message(&help);
-        let count_str = text
-            .prompt()
-            .map_err(map_inquire_err)?;
-        let count: usize = count_str.parse().unwrap_or(0);
 
         // Synthesize a definition for the element type.
         let elem_def = VariableDefinition {
@@ -519,11 +565,43 @@ impl PromptBuilder {
             label: None,
             ofields_definitions: def.ofields_definitions.clone(),
         };
-        let mut items = Vec::with_capacity(count);
-        for idx in 0..count {
-            let ipath = format!("{}[{}]", path, idx);
-            let v = self.collect_definition(&ipath, &elem_def, None)?;
-            items.push(v);
+
+        let mut items: Vec<VariableValue> = Vec::new();
+        let help = format!("add or finish items{BACK_HINT}");
+        loop {
+            let menu_lbl = format!("{} ({} items added)", path, items.len());
+            let mut select = inquire::Select::new(&menu_lbl, vec!["add item".to_string(), "done".to_string()]);
+            select = select.with_help_message(&help);
+            let choice = select.prompt().map_err(map_inquire_err)?;
+            if choice == "done" {
+                break;
+            }
+            // "add item" — collect a new item at index `items.len()`. Pressing
+            // Esc (Back) while entering an item moves back to re-edit the
+            // previous item (keeping its current value as the default) instead
+            // of discarding the list; Back at item 0 returns to this menu.
+            let mut idx = items.len();
+            loop {
+                let ipath = format!("{}[{}]", path, idx);
+                let default = items.get(idx).cloned();
+                match self.collect_definition(&ipath, &elem_def, default.as_ref()) {
+                    Ok(v) => {
+                        if idx < items.len() {
+                            items[idx] = v;
+                        } else {
+                            items.push(v);
+                        }
+                        break;
+                    }
+                    Err(BuilderError::Back) => {
+                        if idx == 0 {
+                            break;
+                        }
+                        idx -= 1;
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
         }
         Ok(VariableValue::List(items))
     }
@@ -534,7 +612,7 @@ impl PromptBuilder {
 // ---------------------------------------------------------------------------
 
 fn label(path: &str, _def: &VariableDefinition) -> String {
-    path.to_string()
+    format!("> {}", path)
 }
 
 fn desc(def: &VariableDefinition) -> Option<&str> {
@@ -949,5 +1027,188 @@ fn as_strings(
             "operator '{}' requires strings, got {:?} and {:?}",
             op, l, r
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::upl::parser::PromptParser;
+
+    fn parse(upl: &str) -> Prompt {
+        PromptParser::parse(upl).expect("UPL should parse")
+    }
+
+    /// `create_rest_api`-style prompt: `resource` is referenced by the
+    /// top-level `resources` list, and `field` is referenced by the `fields`
+    /// list nested inside `resource`'s ofields. Both must be flagged as type
+    /// definitions (skipped during collection). A plain standalone object
+    /// (`materials`) that nothing references must NOT be flagged.
+    #[test]
+    fn referenced_type_defs_skips_referenced_objects_only() {
+        let upl = "\
+--
+name: p
+params:
+  api_name:
+    type: string
+    def: \"My API\"
+  resources:
+    type: list
+    etype: resource
+    def: []
+  resource:
+    type: object
+    ofields:
+      name:
+        type: string
+        def: \"users\"
+      actions:
+        type: option_multi
+        etype: string
+        opts:
+          - \"GET\"
+          - \"POST\"
+        def: [\"GET\"]
+      fields:
+        type: list
+        etype: field
+        def: []
+  field:
+    type: object
+    ofields:
+      name:
+        type: string
+        def: \"id\"
+      type:
+        type: string
+        def: \"string\"
+  materials:
+    type: object
+    ofields:
+      has_calculator:
+        type: boolean
+        def: true
+--
+x
+--
+";
+        let builder = PromptBuilder::new(parse(upl));
+        let referenced = builder.referenced_type_defs();
+        assert!(
+            referenced.contains("resource"),
+            "resource is referenced via etype and should be a type definition: {:?}",
+            referenced
+        );
+        assert!(
+            referenced.contains("field"),
+            "field is referenced by a nested list and should be a type definition: {:?}",
+            referenced
+        );
+        assert!(
+            !referenced.contains("materials"),
+            "materials is not referenced and should remain collectible: {:?}",
+            referenced
+        );
+        assert!(
+            !referenced.contains("api_name"),
+            "non-object variables are never type definitions: {:?}",
+            referenced
+        );
+    }
+
+    /// A list with an inline `etype: object` (its own `ofields`, no named
+    /// reference) produces no element_ref, so nothing is skipped — a
+    /// standalone object declared alongside it is still collected.
+    #[test]
+    fn referenced_type_defs_empty_for_inline_object_etype() {
+        let upl = "\
+--
+name: p
+params:
+  endpoints:
+    type: list
+    etype: object
+    ofields:
+      path:
+        type: string
+  config:
+    type: object
+    ofields:
+      host:
+        type: string
+        def: \"localhost\"
+--
+x
+--
+";
+        let builder = PromptBuilder::new(parse(upl));
+        let referenced = builder.referenced_type_defs();
+        assert!(
+            referenced.is_empty(),
+            "inline object etype should not reference any type definition: {:?}",
+            referenced
+        );
+    }
+
+    /// Element references are case-insensitive (`etype: Server` resolves to
+    /// `server`); the referenced set is lowercased so the skip check matches
+    /// case-insensitively.
+    #[test]
+    fn referenced_type_defs_case_insensitive() {
+        let upl = "\
+--
+name: p
+params:
+  server:
+    type: object
+    ofields:
+      host:
+        type: string
+        def: \"localhost\"
+  servers:
+    type: list
+    etype: Server
+    def: []
+--
+x
+--
+";
+        let builder = PromptBuilder::new(parse(upl));
+        let referenced = builder.referenced_type_defs();
+        assert!(referenced.contains("server"), "matched case-insensitively: {:?}", referenced);
+    }
+
+    /// `option_single`/`option_multi` with a referenced object etype also
+    /// marks that object as a type definition (skip it during collection).
+    #[test]
+    fn referenced_type_defs_includes_option_object_etype() {
+        let upl = "\
+--
+name: p
+params:
+  feature:
+    type: object
+    ofields:
+      name:
+        type: string
+      enabled:
+        type: boolean
+        def: false
+  pick:
+    type: option_single
+    etype: feature
+    label: name
+    opts:
+      - { name: \"auth\", enabled: true }
+      - { name: \"logs\", enabled: false }
+    def: { name: \"auth\", enabled: true }
+--
+x
+--
+";
+        let builder = PromptBuilder::new(parse(upl));
+        let referenced = builder.referenced_type_defs();
+        assert!(referenced.contains("feature"), "option_single etype should flag feature: {:?}", referenced);
     }
 }

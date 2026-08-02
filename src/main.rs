@@ -80,7 +80,7 @@ fn print_build_header(title: &str) {
     let _ = execute!(
         err,
         SetBackgroundColor(Color::DarkGreen),
-        SetForegroundColor(Color::White),
+        SetForegroundColor(Color::Black),
         SetAttribute(Attribute::Bold),
         Print(" Building prompt "),
         ResetColor,
@@ -448,8 +448,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // answers in yellow too.
     let mut cfg = RenderConfig::default_colored();
     cfg.prompt = StyleSheet::new().with_fg(InquireColor::LightGreen);
-    cfg.help_message = StyleSheet::new().with_fg(InquireColor::Grey);
-    cfg.default_value = StyleSheet::new().with_fg(InquireColor::Grey);
+    cfg.help_message = StyleSheet::new().with_fg(InquireColor::AnsiValue(248));
+    cfg.default_value = StyleSheet::new().with_fg(InquireColor::AnsiValue(248));
     cfg.text_input = StyleSheet::new().with_fg(InquireColor::LightYellow);
     cfg.answer = StyleSheet::new().with_fg(InquireColor::LightYellow);
     inquire::set_global_render_config(cfg);

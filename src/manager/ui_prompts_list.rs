@@ -685,7 +685,7 @@ pub fn run(folder: Option<&str>) -> Result<(), ListError> {
         let _ = execute!(
             err,
             SetBackgroundColor(Color::DarkGreen),
-            SetForegroundColor(Color::White),
+            SetForegroundColor(Color::Black),
             SetAttribute(Attribute::Bold),
             Print(" Building prompt "),
             ResetColor,
