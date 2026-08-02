@@ -1,0 +1,52 @@
+--
+name: implement_user_story
+title: Implements a user story following the Cucumber Model. User stories are customer requirements on how a system should work
+desc: Builds a prompt that defines a change in a codebase using the Cucumber Model that helps to structure the requirements
+params:
+  name:
+    type: string
+    desc: The name of the user story (format: As a <role_name>, when I <action_name> I want to be able to <expected_outcome>)
+    def: 'As a User, when I click in "Connect" button, I want to be able to connect to the server'
+  acceptance_criteria:
+    type: list
+    desc: The list of acceptance criteria that need to be met
+    def: []
+    etype: string
+  implementation_rules:
+    type: list
+    desc: A list of rules that need to be followed when implementing the user story
+    etype: string
+  current_status:
+    type: long_string
+    desc: The current status of the system
+  extra_details:
+    type: long_string
+    desc: Extra details need to implement the feature
+    def: >>>
+     Make sure you understand the codebase before implementing the changes or making assumptions
+    <<<
+--
+
+Implement the next user story:
+
+-------------------------------------------------------------------------------
+ [[[NAME]]]
+-------------------------------------------------------------------------------
+
+{{{if CURRENT_STATUS}}}
+**Current status**
+[[[CURRENT_STATUS]]]
+{{{end if}}}
+
+{{{if EXTRA_DETAILS}}}
+Here are some extra details to consider when implementing it:
+[[[EXTRA_DETAILS]]]
+{{{end if}}}
+
+{{{if ACCEPTANCE_CRITERIA}}}
+**Acceptance criteria**
+{{{for CRITERIA in ACCEPTANCE_CRITERIA}}}
+  * [[[CRITERIA]]]
+{{{end for}}}
+{{{end if}}}
+--
