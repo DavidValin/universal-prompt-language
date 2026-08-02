@@ -73,8 +73,6 @@ params:
         def: false
 --
 
-Role: You are a senior backend architect designing REST APIs.
-
 Below is a specification for a REST API named "[[[API_NAME]]]" (version [[[API_VERSION]]]).
 The API is organized as a FLAT list of endpoints: resource names are plural and there is no
 resource nesting. The endpoint conventions are:

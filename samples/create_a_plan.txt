@@ -24,8 +24,6 @@ params:
     def: 4
 --
 
-Role: You are an expert educator skilled at calibrating explanations to a reader's level.
-
 Create a plan with subtasks to achieve the next goal: "[[[GOAL]]]".
 
 Plan format:

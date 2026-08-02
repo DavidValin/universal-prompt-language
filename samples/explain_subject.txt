@@ -56,7 +56,6 @@ params:
       - "applications"
       - "common_pitfalls"
 --
-Role: You are an expert educator skilled at calibrating explanations to a reader's level.
 
 Explain the subject "[[[SUBJECT]]]" for a [[[AUDIENCE_LEVEL]]] reader.
 

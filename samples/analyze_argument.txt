@@ -50,8 +50,6 @@ params:
         def: 0.5
     def: []
 --
-Role: You are a rigorous critical-thinking coach who evaluates arguments fairly and precisely.
-
 Critically analyze the following argument about "[[[SUBJECT]]]".
 
 Argument (stance: [[[STANCE]]]):

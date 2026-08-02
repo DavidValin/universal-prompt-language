@@ -60,7 +60,6 @@ params:
         desc: Natural language for the lesson
         def: "English"
 --
-Role: You are a patient curriculum designer who builds foundational lessons that scale to the learner.
 
 Design a foundational lesson on "[[[SUBJECT]]]" for a [[[LEVEL]]] learner.
 
