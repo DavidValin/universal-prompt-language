@@ -1,13 +1,13 @@
 [package]
 name = "universal-prompt-language"
-version = "0.1.0-rc.2"
+version = "0.1.0-rc.3"
 edition = "2021"
 keywords = ["prompts", "dynamic", "llm", "ai", "library"]
 
 authors = ["David Valin <hola@davidvalin.com>"]
-homepage = "https://github.com/DavidValin/upl"
-repository = "https://github.com/DavidValin/upl"
-description = "Create and Manage dynamic prompts using Universal Prompt Language. UPL spec + server + CLI"
+homepage = "https://crates.io/crates/universal-prompt-language"
+repository = "https://github.com/DavidValin/universal-prompt-language"
+description = "Define, Manage, Edit and Build and Store dynamic prompts using Universal Prompt Language (UPL)"
 license-file = "LICENSE"
 readme = "README.md"
 
