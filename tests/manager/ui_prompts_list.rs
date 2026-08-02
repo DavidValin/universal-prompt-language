@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 
 use universal_prompt_language::manager::ui_prompts_list::{
-    compute_layout, pad, resolve_folder, truncate, INDENT, SEP, TRAILING, W_NAME,
+    center, compute_layout, pad, resolve_folder, truncate, INDENT, SEP, TRAILING, W_NAME,
 };
 
 #[test]
@@ -25,6 +25,21 @@ fn truncate_adds_ellipsis() {
 #[test]
 fn truncate_keeps_short() {
     assert_eq!(truncate("abc", 5), "abc");
+}
+
+#[test]
+fn center_pads_evenly() {
+    assert_eq!(center("ab", 6), "  ab  ");
+}
+
+#[test]
+fn center_extra_space_goes_right() {
+    assert_eq!(center("ab", 5), " ab  ");
+}
+
+#[test]
+fn center_truncates_long() {
+    assert_eq!(center("abcdef", 3), "abc");
 }
 
 #[test]

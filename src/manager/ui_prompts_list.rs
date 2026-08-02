@@ -250,14 +250,28 @@ pub fn pad(s: &str, w: usize) -> String {
     }
 }
 
+/// Center `s` within `w` characters (horizontally). If the padding cannot
+/// split evenly, the extra space goes on the right. Strings longer than `w`
+/// are truncated just like `pad`.
+pub fn center(s: &str, w: usize) -> String {
+    let n = s.chars().count();
+    if n >= w {
+        s.chars().take(w).collect()
+    } else {
+        let left = (w - n) / 2;
+        let right = w - n - left;
+        format!("{}{s}{}", " ".repeat(left), " ".repeat(right))
+    }
+}
+
 fn header_line(layout: &Layout) -> String {
     format!(
         "{}{SEP}{}{SEP}{}{SEP}{}{SEP}{} ",
         pad("NAME", layout.w_name),
         pad("TITLE", layout.w_title),
-        pad("TAGS", layout.w_tags),
-        pad("PARAMS", layout.w_params),
-        pad("REPOSITORY", layout.w_repo),
+        center("TAGS", layout.w_tags),
+        center("PARAMS", layout.w_params),
+        center("REPOSITORY", layout.w_repo),
     )
 }
 
@@ -278,9 +292,9 @@ fn row_line(row: &Row, tags_count: usize, layout: &Layout) -> String {
         "{}{SEP}{}{SEP}{}{SEP}{}{SEP}{} ",
         pad(&truncate(&row.name, layout.w_name), layout.w_name),
         pad(&truncate(&row.title, layout.w_title), layout.w_title),
-        pad(&tags_count.to_string(), layout.w_tags),
-        pad(&row.params.to_string(), layout.w_params),
-        pad(&truncate(&row.repository, layout.w_repo), layout.w_repo),
+        center(&tags_count.to_string(), layout.w_tags),
+        center(&row.params.to_string(), layout.w_params),
+        center(&truncate(&row.repository, layout.w_repo), layout.w_repo),
     )
 }
 
