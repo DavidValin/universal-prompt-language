@@ -19,6 +19,7 @@ use universal_prompt_language::upl::parser::PromptParser;
 use universal_prompt_language::repository::protocol::Visibility;
 use universal_prompt_language::repository::client;
 use universal_prompt_language::repository::server;
+use universal_prompt_language::editor::ui_prompt_editor;
 
 fn read_file(path: &str) -> Result<String, Box<dyn std::error::Error>> {
     let mut file = File::open(path)?;
@@ -34,6 +35,7 @@ fn usage(prog: &str) {
     eprintln!("Usage:");
     eprintln!("  {prog} [build|b] [<folder> | <prompt.upl|txt>]");
     eprintln!("  {prog} [build|b] --no-input <prompt.upl|txt>");
+    eprintln!("  {prog} init");
     eprintln!("  {prog} login");
     eprintln!("  {prog} push <prompt.upl|txt> [--visibility public|private]");
     eprintln!("  {prog} pull <username>/<prompt_name>[/<version>]");
@@ -46,7 +48,8 @@ fn usage(prog: &str) {
     eprintln!();
     eprintln!("Commands:");
     eprintln!("  build (alias: b)  Browse a prompt library or build a single prompt file.");
-    eprintln!("  login            Log in to the configured repository (stores a session token).");
+    eprintln!("  init              Create a new UPL prompt from the skeleton in the editor.");
+    eprintln!("  login             Log in to the configured repository (stores a session token).");
     eprintln!("  push             Push a local prompt to the repository (uses its `name` as name).");
     eprintln!("  pull             Pull a prompt from the repository into ~/.upl/prompts.");
     eprintln!("  del              Delete all versions of one of your prompts from the repository.");
@@ -138,6 +141,18 @@ fn build_prompt_file(path: &str, no_input: bool) -> Result<(), Box<dyn std::erro
 fn build_library(folder: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
     ui_prompts_list::run(folder)?;
     Ok(())
+}
+
+fn run_init() -> Result<(), Box<dyn std::error::Error>> {
+    // Open the editor with the skeleton template. The editor handles saving
+    // the new prompt to ~/.upl/prompts/<name>.txt on Ctrl+S.
+    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        return Err("init must be run in a TTY".into());
+    }
+    ui_prompt_editor::run_editor_standalone(ui_prompt_editor::SKELETON)?;
+    // After the editor closes (saved or quit), drop into the prompt browser
+    // so the user lands on their prompt list rather than the shell.
+    build_library(None)
 }
 
 fn run_build(args: &[String], prog: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -451,6 +466,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     match args[1].as_str() {
         "build" | "b" => run_build(&args[2..], prog),
+        "init" => run_init(),
         "login" => run_login(&args[2..]),
         "push" => run_push(&args[2..], prog),
         "pull" => run_pull(&args[2..], prog),

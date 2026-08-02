@@ -32,16 +32,37 @@ use std::path::{Path, PathBuf};
 use crossterm::{
     cursor,
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
+    execute,
     queue,
     style::{
         Attribute, Color, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor,
     },
-    terminal::{self, Clear, ClearType},
+    terminal::{
+        self, Clear, ClearType, DisableLineWrap, EnableLineWrap, EnterAlternateScreen,
+        LeaveAlternateScreen,
+    },
 };
 
 use thiserror::Error;
 
 use crate::upl::parser::{PromptParser, VariableType};
+
+/// The skeleton a brand-new prompt starts from. It is a valid, minimal UPL
+/// prompt so the editor opens in the VALID state and the user can save it
+/// straight away with Ctrl+S (writing it to ~/.upl/prompts/<name>.txt).
+pub const SKELETON: &str = "\
+--
+name: new_prompt
+title: New Prompt
+desc: A new prompt. Edit the name, add params, and write your body below.
+params:
+  input:
+    type: string
+    desc: The main input
+    def: \"\"
+--
+[[[INPUT]]]
+";
 
 #[derive(Error, Debug)]
 pub enum EditorError {
@@ -93,9 +114,19 @@ pub struct Editor {
 /// state and only manages the cursor visibility.
 pub fn run_editor(path: &Path) -> Result<bool, EditorError> {
     let content = std::fs::read_to_string(path).map_err(EditorError::Io)?;
+    run_editor_with_content(&content)
+}
+
+/// Open the editor with the given initial `content` (instead of reading it
+/// from a file). Used by the "new prompt" flows (`upl init` and the `n`
+/// shortcut in the prompt list), which start from the [`SKELETON`] template.
+///
+/// Like [`run_editor`], the caller must have already entered the alternate
+/// screen and enabled raw mode.
+pub fn run_editor_with_content(content: &str) -> Result<bool, EditorError> {
     let (cols, rows) = terminal::size().map_err(|e| EditorError::Tui(e.to_string()))?;
     let mut ed = Editor {
-        lines: split_lines(&content),
+        lines: split_lines(content),
         row: 0,
         col: 0,
         top: 0,
@@ -112,6 +143,33 @@ pub fn run_editor(path: &Path) -> Result<bool, EditorError> {
     ed.recompute();
     ed.run()?;
     Ok(ed.saved)
+}
+
+/// Standalone entry point that performs the full terminal setup (enter the
+/// alternate screen, enable raw mode) before delegating to
+/// [`run_editor_with_content`], and restores the terminal on exit. Use this
+/// from contexts that are not already inside a TUI (e.g. `upl init`).
+///
+/// `content` is the initial prompt text to edit (typically [`SKELETON`]).
+/// Returns `true` if the user saved the prompt.
+pub fn run_editor_standalone(content: &str) -> Result<bool, EditorError> {
+    let mut stdout = io::stderr();
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        DisableLineWrap,
+        cursor::Hide
+    )
+    .map_err(|e| EditorError::Tui(e.to_string()))?;
+    terminal::enable_raw_mode().map_err(|e| EditorError::Tui(e.to_string()))?;
+
+    let result = run_editor_with_content(content);
+
+    let _ = terminal::disable_raw_mode();
+    let _ = execute!(stdout, cursor::Show, EnableLineWrap, LeaveAlternateScreen);
+    let _ = stdout.flush();
+
+    result
 }
 
 fn split_lines(content: &str) -> Vec<Vec<char>> {
@@ -1263,6 +1321,18 @@ mod tests {
 
     fn chars(s: &str) -> Vec<Vec<char>> {
         split_lines(s)
+    }
+
+    #[test]
+    fn skeleton_parses_as_valid_prompt() {
+        // The "new prompt" skeleton must be a valid UPL prompt so the editor
+        // opens in the VALID state and the user can save it immediately.
+        let prompt = PromptParser::parse(SKELETON)
+            .expect("SKELETON must be a valid UPL prompt");
+        assert_eq!(prompt.name, "new_prompt");
+        assert_eq!(prompt.title.as_deref(), Some("New Prompt"));
+        assert!(prompt.variable_definitions.contains_key("input"));
+        assert!(prompt.prompt.contains("[[[INPUT]]]"));
     }
 
     #[test]

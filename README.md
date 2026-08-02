@@ -20,6 +20,7 @@ All operations are integrated in a single cli command called `upl`.
 * Specification: [`upl-spec/upl-1.0-rfc.pdf`](upl-spec/upl-1.0-rfc.md)
 * Prompt Browser: `upl <prompts_folder>` (or `upl` alone to browse `~/.upl`)
 * Prompt Builder: `upl b <prompt_file.txt>` (builds a single file directly)
+* Prompt Editor: `upl init` (create a new prompt from the skeleton)
 * Repository server: `upl start-repository`
 * Repository client (push): `upl push a_user/my_nice_prompt`
 * Repository client (push): `upl pull a_user/my_nice_prompt`
@@ -65,6 +66,9 @@ upl <prompts_folder>
 # or: upl build <prompts_folder>
 ```
 
+From the browser you can press `e` on a prompt to open it in the [Prompt
+Editor](#prompt-editor), or `n` to create a new one from the skeleton.
+
 ## Build and Run a prompt from an upl prompt
 
 Build a single prompt file directly by filling in its variables interactively
@@ -99,6 +103,43 @@ upl > prompt.txt
 vtmate -i prompt.txt
 ```
 
+## Prompt Editor
+
+UPL ships with a built-in terminal text editor for authoring and editing
+prompts without leaving `upl`. It opens a full-screen, two-pane view: an
+editable area on the left and a live list of the prompt's declared variables
+on the right. The content is re-parsed on every keystroke, so a VALID /
+INVALID badge in the status bar always reflects the current state.
+
+Key bindings:
+
+| Key           | Action                                                  |
+|---------------|---------------------------------------------------------|
+| arrows / PgUp / PgDn / Home / End | navigate               |
+| type          | insert                                                  |
+| Enter         | new line                                                |
+| Backspace / Delete | erase                                              |
+| Tab           | insert 2 spaces                                         |
+| Ctrl+S        | save (only when VALID) to `~/.upl/prompts/<name>.txt`   |
+| Ctrl+R        | open the UPL RFC reference popup                        |
+| Esc / Ctrl+C  | quit back to the list                                   |
+
+There are two ways to open the editor:
+
+```bash
+# Create a new prompt from the skeleton template.
+upl init
+
+# Edit an existing prompt from the browser.
+upl            # then press 'e' on a prompt to edit it, or 'n' to create one
+```
+
+`upl init` drops you straight into the editor pre-filled with a minimal valid
+UPL skeleton; rename it, add your params, write the body, and press Ctrl+S to
+save it into `~/.upl/prompts/`. From the browser, pressing `n` does the same
+and refreshes the list on save, while `e` opens the selected prompt for
+editing.
+
 ### UPL Repository
 
 For more details about upl reposity see [`REPOSITORY.md`](REPOSITORY.md)
@@ -132,6 +173,7 @@ upl pull a_user/my_nice_prompt
 ## CLI Commands
 
 ```
+  init             Create a new UPL prompt from the skeleton in the editor.
   build (alias: b) Browse a prompt library or build a single prompt file.
   login            Log in to the configured repository (stores a session token).
   push             Push a local prompt to the repository (uses its `name` as name).
