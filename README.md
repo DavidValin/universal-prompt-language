@@ -17,8 +17,9 @@ This project contains:
 2. terminal `prompts browser` with tag support
 3. terminal `prompts builder`, to construct a dynamic prompt interactively by filling in the input variables
 4. terminal `prompt editor` with syntax highlight
-5. UPL `repository server`, to create a centralized repository of upl prompts
-6. UPL `repository client`, to publish/download upl prompts to/from a an upl repository
+5. `build history` with resume and rebuild support
+6. UPL `repository server`, to create a centralized repository of upl prompts
+7. UPL `repository client`, to publish/download upl prompts to/from a an upl repository
 
 All operations are integrated in a single cli command called `upl`.
 
@@ -76,6 +77,8 @@ upl <prompts_folder>
 
 From the browser you can press `e` on a prompt to open it in the [Prompt
 Editor](#prompt-editor), or `n` to create a new one from the skeleton.
+Press `Ctrl+H` to open the [Build History](#build-history) sidebar and
+resume or rebuild a previous build.
 
 ## Build and Run a prompt from an upl prompt
 
@@ -110,6 +113,48 @@ If what you want is a voice response from llm, check [vtmate](https://www.github
 upl > prompt.txt
 vtmate -i prompt.txt
 ```
+
+## Build History
+
+UPL tracks every prompt build in `~/.upl/build_history.json`. After each field
+is collected, the build record is persisted — so if you cancel or close the
+terminal mid-build, you can resume from the exact point of interruption.
+
+Each record stores a uuid, date, prompt sha256, status (`in_progress` or
+`built`), and the collected field values.
+
+### Resume and Rebuild
+
+Press `Ctrl+H` to open the build-history sidebar:
+
+- In the **prompt browser** — `Ctrl+H` opens the sidebar at any time.
+- During a **build** — after submitting a field (pressing Enter), a brief
+  window lets you press `Ctrl+H` to open the sidebar.
+
+From the sidebar:
+
+| Key           | Action                                                  |
+|---------------|---------------------------------------------------------|
+| ↑ / ↓         | navigate through build records                           |
+| Enter         | resume (if in progress) or rebuild (if built)           |
+| Ctrl+D        | delete the selected record                              |
+| Esc / q       | close the sidebar                                       |
+
+Resuming an in-progress build pre-fills the already-collected fields and
+continues from the next one. Rebuilding a completed build starts fresh with
+the same prompt.
+
+### Disabling History
+
+Build history is enabled by default. To disable it for a session:
+
+```bash
+upl --no-history
+upl build --no-history samples/create_a_plan.txt
+# or: upl build -nh samples/create_a_plan.txt
+```
+
+When history is disabled, builds are not tracked and `Ctrl+H` is not available.
 
 ## Prompt Editor
 
@@ -192,6 +237,10 @@ upl pull a_user/my_nice_prompt
   start_repository Start the repository TCP/TLS server.
   register_user    Create a repository user (local admin, run on the server host).
   delete_user      Remove a repository user (local admin, run on the server host).
+
+Options:
+  --no-input        Skip interactive prompts and render using declared defaults.
+  --no-history, -nh Disable build history tracking for this session.
 ```
 
 ## Run the tests

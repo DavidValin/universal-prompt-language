@@ -33,7 +33,7 @@ fn usage(prog: &str) {
     eprintln!("upl {version}");
     eprintln!();
     eprintln!("Usage:");
-    eprintln!("  {prog} [build|b] [<folder> | <prompt.upl|txt>]");
+    eprintln!("  {prog} [build|b] [<folder> | <prompt.upl|txt>] [--no-history|-nh]");
     eprintln!("  {prog} [build|b] --no-input <prompt.upl|txt>");
     eprintln!("  {prog} init");
     eprintln!("  {prog} login");
@@ -66,6 +66,7 @@ fn usage(prog: &str) {
     eprintln!();
     eprintln!("Options:");
     eprintln!("  --no-input        Skip the interactive prompts and render using the declared `def:` defaults.");
+    eprintln!("  --no-history, -nh Disable build history tracking for this session (history is enabled by default).");
     eprintln!("  --user, -u        Provide a username non-interactively (login, register_user).");
     eprintln!("  --password, -p    Provide a password non-interactively (login, register_user).");
     eprintln!("  --visibility      Visibility for `push`: public|private (default: private).");
@@ -108,8 +109,9 @@ fn emit_prompt(rendered: &str) {
 }
 
 /// Build a single prompt file (interactive by default, or with defaults when
-/// `no_input` is set).
-fn build_prompt_file(path: &str, no_input: bool) -> Result<(), Box<dyn std::error::Error>> {
+/// `no_input` is set). When `no_history` is true, build progress is not
+/// tracked in the history store.
+fn build_prompt_file(path: &str, no_input: bool, no_history: bool) -> Result<(), Box<dyn std::error::Error>> {
     let p = Path::new(path);
     if !universal_prompt_language::upl::parser::has_valid_extension(p) {
         return Err(
@@ -127,8 +129,22 @@ fn build_prompt_file(path: &str, no_input: bool) -> Result<(), Box<dyn std::erro
     let rendered = (|| -> Result<String, Box<dyn std::error::Error>> {
         if no_input {
             Ok(PromptBuilder::new(prompt).render_with_defaults()?)
-        } else {
+        } else if no_history {
             Ok(PromptBuilder::new(prompt).build_interactive()?)
+        } else {
+            let prompt_sha256 = {
+                use sha2::{Digest, Sha256};
+                let mut hasher = Sha256::new();
+                hasher.update(content.as_bytes());
+                format!("{:x}", hasher.finalize())
+            };
+            match PromptBuilder::new(prompt).build_interactive_tracked(path, &prompt_sha256) {
+                Ok(r) => Ok(r),
+                Err(universal_prompt_language::upl::builder::BuilderError::SwitchBuild { .. }) => {
+                    Err("switched to another build — use 'upl' (browser) to resume".into())
+                }
+                Err(e) => Err(e.into()),
+            }
         }
     })();
     end_build_header();
@@ -138,8 +154,8 @@ fn build_prompt_file(path: &str, no_input: bool) -> Result<(), Box<dyn std::erro
 }
 
 /// Load a prompt library (TUI picker) and build the selected prompt.
-fn build_library(folder: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
-    ui_prompts_list::run(folder)?;
+fn build_library(folder: Option<&str>, no_history: bool) -> Result<(), Box<dyn std::error::Error>> {
+    ui_prompts_list::run(folder, no_history)?;
     Ok(())
 }
 
@@ -152,37 +168,46 @@ fn run_init() -> Result<(), Box<dyn std::error::Error>> {
     ui_prompt_editor::run_editor_standalone(ui_prompt_editor::SKELETON)?;
     // After the editor closes (saved or quit), drop into the prompt browser
     // so the user lands on their prompt list rather than the shell.
-    build_library(None)
+    build_library(None, false)
 }
 
 fn run_build(args: &[String], prog: &str) -> Result<(), Box<dyn std::error::Error>> {
-    if args.is_empty() {
-        return build_library(None);
+    let mut no_input = false;
+    let mut no_history = false;
+    let mut positional: Vec<&str> = Vec::new();
+
+    for arg in args {
+        match arg.as_str() {
+            "--help" | "-h" => {
+                usage(prog);
+                return Ok(());
+            }
+            "--no-input" => no_input = true,
+            "--no-history" | "-nh" => no_history = true,
+            other => positional.push(other),
+        }
     }
 
-    match args[0].as_str() {
-        "--help" | "-h" => {
+    if no_input {
+        if positional.is_empty() {
             usage(prog);
-            Ok(())
+            return Err("missing prompt file after --no-input".into());
         }
-        "--no-input" => {
-            if args.len() < 2 {
-                usage(prog);
-                return Err("missing prompt file after --no-input".into());
-            }
-            build_prompt_file(&args[1], true)
-        }
-        other => {
-            let path = Path::new(other);
-            if path.is_dir() {
-                build_library(Some(other))
-            } else if path.is_file() {
-                build_prompt_file(other, false)
-            } else {
-                usage(prog);
-                Err(format!("not a file or folder: {other}").into())
-            }
-        }
+        return build_prompt_file(positional[0], true, no_history);
+    }
+
+    if positional.is_empty() {
+        return build_library(None, no_history);
+    }
+
+    let path = Path::new(positional[0]);
+    if path.is_dir() {
+        build_library(Some(positional[0]), no_history)
+    } else if path.is_file() {
+        build_prompt_file(positional[0], false, no_history)
+    } else {
+        usage(prog);
+        Err(format!("not a file or folder: {}", positional[0]).into())
     }
 }
 
@@ -466,6 +491,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     match args[1].as_str() {
         "build" | "b" => run_build(&args[2..], prog),
+        "--no-history" | "-nh" => run_build(&args[1..], prog),
         "init" => run_init(),
         "login" => run_login(&args[2..]),
         "push" => run_push(&args[2..], prog),

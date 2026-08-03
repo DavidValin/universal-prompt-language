@@ -27,6 +27,7 @@ use thiserror::Error;
 
 use crate::upl::builder::PromptBuilder;
 use crate::upl::parser::{Prompt, PromptParser};
+use crate::manager::build_history::{self, BuildHistory, BuildRecord, SidebarOutcome};
 use crate::manager::{ui_prompt_tags, ui_tags};
 use crate::editor::ui_prompt_editor;
 
@@ -314,6 +315,7 @@ fn render_list<W: Write>(
     longest_title: usize,
     cols: u16,
     lines: u16,
+    no_history: bool,
 ) -> io::Result<(usize, usize)> {
     // Filter rows by selected tags (AND: a row matches only if it has every
     // selected tag).
@@ -433,9 +435,11 @@ fn render_list<W: Write>(
     }
 
     // Footer
+    let history_hint = if no_history { "" } else { " · Ctrl+H history" };
     let instructions = format!(
-        "{} prompts · ↑/↓ navigate · Enter build · e edit · n new · t filter tags · Ctrl+T prompt tags · Ctrl+R UPL Help · q/Esc quit",
-        filtered.len()
+        "{} prompts · ↑/↓ navigate · Enter build · e edit · n new · t filter tags · Ctrl+T prompt tags{} · Ctrl+R UPL Help · q/Esc quit",
+        filtered.len(),
+        history_hint,
     );
     queue!(
         stdout,
@@ -458,11 +462,14 @@ enum TuiOutcome {
     Quit,
     /// The editor saved a prompt; the list should be re-scanned.
     Reload,
+    /// The user opened the build-history sidebar (Ctrl+H) and chose a
+    /// record to resume or rebuild.
+    HistorySelected(BuildRecord),
 }
 
 /// Run the interactive list TUI. Returns the path of the prompt the user
 /// selected with Enter, or `None` if they quit without selecting.
-fn run_tui(rows: &[Row]) -> Result<TuiOutcome, ListError> {
+fn run_tui(rows: &[Row], no_history: bool) -> Result<TuiOutcome, ListError> {
     // Render the TUI on stderr (not stdout) so that stdout stays clean for
     // the final rendered prompt, allowing `upl list > out.txt` to capture
     // the build while the UI is still visible on the terminal.
@@ -502,6 +509,7 @@ fn run_tui(rows: &[Row]) -> Result<TuiOutcome, ListError> {
                 longest_title,
                 cols,
                 lines,
+                no_history,
             )?;
 
             stdout.flush().map_err(|e| ListError::Tui(e.to_string()))?;
@@ -600,7 +608,7 @@ fn run_tui(rows: &[Row]) -> Result<TuiOutcome, ListError> {
                         ui_tags::run_popup(&mut stdout, &mut selected_tags, &mut store, |out, sel, st, c, l| {
                             render_list(
                                 out, rows, st, sel, &mut selected, &mut top,
-                                longest_title, c, l,
+                                longest_title, c, l, no_history,
                             )?;
                             Ok(())
                         })?;
@@ -628,6 +636,19 @@ fn run_tui(rows: &[Row]) -> Result<TuiOutcome, ListError> {
                             let _ = execute!(stdout, cursor::Hide);
                             // Tags may have changed; reload the store.
                             store = ui_tags::TagStore::load()?;
+                        }
+                    }
+                    KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) && !no_history => {
+                        let mut history = BuildHistory::load()
+                            .map_err(|e| ListError::Tui(e.to_string()))?;
+                        let _ = execute!(stdout, cursor::Show);
+                        let outcome = build_history::run_sidebar(&mut stdout, &mut history)
+                            .map_err(|e| ListError::Tui(e.to_string()))?;
+                        let _ = execute!(stdout, cursor::Hide);
+                        if let SidebarOutcome::Select(uuid) = outcome {
+                            if let Some(record) = history.get(&uuid).cloned() {
+                                return Ok(TuiOutcome::HistorySelected(record));
+                            }
                         }
                     }
                     _ => {}
@@ -658,79 +679,135 @@ fn run_tui(rows: &[Row]) -> Result<TuiOutcome, ListError> {
 
 /// Entry point for the `list` subcommand. Lists prompts in `folder` (or
 /// `~/.upl/prompts` if `None`), lets the user pick one, and builds it.
-pub fn run(folder: Option<&str>) -> Result<(), ListError> {
+pub fn run(folder: Option<&str>, no_history: bool) -> Result<(), ListError> {
     let folder = resolve_folder(folder)?;
     let mut rows = collect_rows(&folder)?;
 
     loop {
-        // run_tui enters the alternate screen and leaves it active on
-        // return (whether or not a selection was made) so we can transition
-        // straight into the build header without flickering. We must leave
-        // the alt screen on every exit path from this point on.
-        let choice = run_tui(&rows);
-        let choice = match choice {
-            Ok(TuiOutcome::Selected(c)) => c,
-            Ok(TuiOutcome::Quit) => {
-                let _ = execute!(io::stderr(), LeaveAlternateScreen);
-                return Ok(());
-            }
-            Ok(TuiOutcome::Reload) => {
-                // The editor saved a prompt; rescan the folder so the new
-                // content (and any newly-created file) shows up.
-                rows = collect_rows(&folder)?;
-                continue;
-            }
-            Err(e) => {
-                let _ = execute!(io::stderr(), LeaveAlternateScreen);
-                return Err(e);
+        // Determine what to build — either from the browser or from the
+        // build-history sidebar (Ctrl+H). `resume_record` is `Some` when
+        // resuming an in-progress build; `None` for a fresh build.
+        let (build_path, build_sha256, _build_title, resume_record) = loop {
+            // run_tui enters the alternate screen and leaves it active on
+            // return so we can transition straight into the build header
+            // without flickering.
+            let choice = run_tui(&rows, no_history);
+            match choice {
+                Ok(TuiOutcome::Selected(row)) => {
+                    break (row.path, row.sha256, row.title, None);
+                }
+                Ok(TuiOutcome::HistorySelected(record)) => {
+                    let path = PathBuf::from(&record.prompt_path);
+                    let title = record.prompt_name.clone();
+                    let sha256 = record.prompt_sha256.clone();
+                    let resume = if record.is_resumable() {
+                        Some(record)
+                    } else {
+                        None
+                    };
+                    break (path, sha256, title, resume);
+                }
+                Ok(TuiOutcome::Quit) => {
+                    let _ = execute!(io::stderr(), LeaveAlternateScreen);
+                    return Ok(());
+                }
+                Ok(TuiOutcome::Reload) => {
+                    rows = collect_rows(&folder)?;
+                    continue;
+                }
+                Err(e) => {
+                    let _ = execute!(io::stderr(), LeaveAlternateScreen);
+                    return Err(e);
+                }
             }
         };
 
-        // Build the chosen prompt via the existing flow.
-        let (prompt, _) = load_prompt(&choice.path)?;
+        // Build loop: handles SwitchBuild (Ctrl+H → resume/rebuild a
+        // different build) by reloading the prompt and restarting.
+        let mut current_path = build_path;
+        let mut current_sha256 = build_sha256;
+        let mut current_resume = resume_record;
 
-        // Announce the build with a styled header on stderr so it never
-        // pollutes the rendered prompt body that downstream programs consume
-        // via stdout. We're already in the alternate screen from run_tui;
-        // just clear it and move the cursor to the top.
-        let mut err = io::stderr();
-        let _ = execute!(err, Clear(ClearType::All), cursor::MoveTo(0, 0));
-        let _ = execute!(
-            err,
-            SetBackgroundColor(Color::DarkGreen),
-            SetForegroundColor(Color::Black),
-            SetAttribute(Attribute::Bold),
-            Print(" Building prompt "),
-            ResetColor,
-            SetAttribute(Attribute::Reset),
-            Print(" "),
-            SetForegroundColor(Color::Yellow),
-            Print(&choice.title),
-            ResetColor,
-            Print("\n\n"),
-        );
-        let _ = err.flush();
+        let build_result: Result<Option<String>, ListError> = loop {
+            let (prompt, _) = load_prompt(&current_path)?;
+            let title = prompt
+                .title
+                .clone()
+                .unwrap_or_else(|| current_path.display().to_string());
 
-        let rendered = PromptBuilder::new(prompt).build_interactive();
-        match rendered {
-            // Cancelled (Esc / Ctrl+C): go back to the prompt list.
-            Err(crate::upl::builder::BuilderError::Cancelled) => {
-                continue;
+            // Announce the build with a styled header on stderr.
+            let mut err = io::stderr();
+            let _ = execute!(err, Clear(ClearType::All), cursor::MoveTo(0, 0));
+            let _ = execute!(
+                err,
+                SetBackgroundColor(Color::DarkGreen),
+                SetForegroundColor(Color::Black),
+                SetAttribute(Attribute::Bold),
+                Print(" Building prompt "),
+                ResetColor,
+                SetAttribute(Attribute::Reset),
+                Print(" "),
+                SetForegroundColor(Color::Yellow),
+                Print(&title),
+                ResetColor,
+                Print("\n\n"),
+            );
+            let _ = err.flush();
+
+            let builder = PromptBuilder::new(prompt);
+            let rendered = if no_history {
+                builder.build_interactive()
+            } else if let Some(record) = &current_resume {
+                builder.resume_interactive(record)
+            } else {
+                builder.build_interactive_tracked(
+                    &current_path.to_string_lossy(),
+                    &current_sha256,
+                )
+            };
+
+            match rendered {
+                Err(crate::upl::builder::BuilderError::Cancelled) => {
+                    break Ok(None);
+                }
+                Err(crate::upl::builder::BuilderError::SwitchBuild { uuid }) => {
+                    let history = BuildHistory::load()
+                        .map_err(|e| ListError::Tui(e.to_string()))?;
+                    if let Some(record) = history.get(&uuid).cloned() {
+                        current_path = PathBuf::from(&record.prompt_path);
+                        current_sha256 = record.prompt_sha256.clone();
+                        current_resume = if record.is_resumable() {
+                            Some(record)
+                        } else {
+                            None
+                        };
+                        continue;
+                    }
+                    break Ok(None);
+                }
+                Err(e) => {
+                    let _ = execute!(err, LeaveAlternateScreen);
+                    let _ = err.flush();
+                    break Err(ListError::Build(e.to_string()));
+                }
+                Ok(rendered) => {
+                    let _ = execute!(err, LeaveAlternateScreen);
+                    let _ = err.flush();
+                    break Ok(Some(rendered));
+                }
             }
-            Err(e) => {
-                let _ = execute!(err, LeaveAlternateScreen);
-                let _ = err.flush();
-                return Err(ListError::Build(e.to_string()));
-            }
-            Ok(rendered) => {
-                let _ = execute!(err, LeaveAlternateScreen);
-                let _ = err.flush();
+        };
+
+        match build_result {
+            Ok(None) => continue,
+            Ok(Some(rendered)) => {
                 let mut out = io::stdout();
                 let _ = out.write_all(rendered.as_bytes());
                 let _ = out.write_all(b"\n");
                 let _ = out.flush();
                 return Ok(());
             }
+            Err(e) => return Err(e),
         }
     }
 }

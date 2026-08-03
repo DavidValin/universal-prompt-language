@@ -21,6 +21,9 @@ use thiserror::Error;
 use crate::upl::parser::{
     CondExpr, Node, ObjectMap, Prompt, VariableDefinition, VariableType, VariableValue,
 };
+use crate::manager::build_history::{
+    self, BuildRecord, HistoryContext, SidebarOutcome,
+};
 
 /// Map of top-level variable name -> collected value.
 pub type ValueMap = HashMap<String, VariableValue>;
@@ -47,6 +50,13 @@ pub enum BuilderError {
     /// to `Cancelled` when there is no previous field to go back to.
     #[error("back")]
     Back,
+    /// The user opened the build-history sidebar (Ctrl+H) and chose to
+    /// resume or rebuild a different build. The caller should load the
+    /// prompt identified by the record with this uuid and start a new
+    /// build. The current build's state has already been persisted as
+    /// in-progress.
+    #[error("switch to build {uuid}")]
+    SwitchBuild { uuid: String },
 }
 
 /// Map an `inquire::InquireError` to a `BuilderError`.
@@ -81,8 +91,55 @@ impl PromptBuilder {
 
     /// Collect values interactively via the TUI, then render the final prompt.
     pub fn build_interactive(&self) -> Result<String, BuilderError> {
-        let values = self.collect_values()?;
+        let values = self.collect_values(&mut None, None)?;
         self.render(&values)
+    }
+
+    /// Like `build_interactive` but tracks progress in the build-history store
+    /// (`~/.upl/build_history.json`). After each field is collected the record
+    /// is updated and persisted, so an interrupted build can be resumed.
+    /// Between fields, Ctrl+H opens the build-history sidebar.
+    pub fn build_interactive_tracked(
+        &self,
+        prompt_path: &str,
+        prompt_sha256: &str,
+    ) -> Result<String, BuilderError> {
+        let total = self.collectible_field_count();
+        let mut hctx = Some(HistoryContext::new(
+            prompt_sha256,
+            &self.prompt.name,
+            prompt_path,
+            total,
+        ));
+        let values = self.collect_values(&mut hctx, None)?;
+        if let Some(h) = hctx.as_mut() {
+            h.mark_built();
+        }
+        self.render(&values)
+    }
+
+    /// Resume a previously interrupted build. The saved values are used as
+    /// defaults for already-collected fields; collection continues from the
+    /// first un-collected field. History tracking continues so the resumed
+    /// build can be interrupted again.
+    pub fn resume_interactive(&self, record: &BuildRecord) -> Result<String, BuilderError> {
+        let mut hctx = Some(HistoryContext::from_record(record));
+        let values = self.collect_values(&mut hctx, Some(&record.values))?;
+        if let Some(h) = hctx.as_mut() {
+            h.mark_built();
+        }
+        self.render(&values)
+    }
+
+    /// Number of collectible top-level fields (excluding `object_shape` type
+    /// definitions, which are never prompted).
+    pub fn collectible_field_count(&self) -> usize {
+        let referenced = self.referenced_type_defs();
+        self.prompt
+            .variable_definitions
+            .iter()
+            .filter(|(k, _)| !referenced.contains(&k.to_lowercase()))
+            .count()
     }
 
     /// Pure render: substitute placeholders and evaluate constructs using the
@@ -188,7 +245,11 @@ impl PromptBuilder {
     /// the default when a field is re-collected after going back, so previous
     /// answers are preserved (not reset). Going back from the first parameter
     /// cancels the build.
-    fn collect_values(&self) -> Result<ValueMap, BuilderError> {
+    fn collect_values(
+        &self,
+        hctx: &mut Option<HistoryContext>,
+        resume: Option<&ValueMap>,
+    ) -> Result<ValueMap, BuilderError> {
         // Top-level `object_shape` variables are pure type definitions (RFC
         // §3.1/§3.4): they declare a reusable shape and are never prompted
         // for on their own — only the site that references them (a
@@ -206,6 +267,19 @@ impl PromptBuilder {
             .collect();
         let mut values: Vec<VariableValue> = Vec::with_capacity(defs.len());
         let mut idx = 0usize;
+
+        // Pre-fill from resume values so we skip already-collected fields.
+        if let Some(resume_map) = resume {
+            for (key, _) in &defs {
+                if let Some(v) = resume_map.get(key) {
+                    values.push(v.clone());
+                    idx += 1;
+                } else {
+                    break;
+                }
+            }
+        }
+
         while idx < defs.len() {
             let (key, def) = &defs[idx];
             // Prefer the previously collected value (so going back keeps it),
@@ -222,6 +296,20 @@ impl PromptBuilder {
                         values.push(v);
                     }
                     idx += 1;
+
+                    // Update build history and check Ctrl+H between fields.
+                    if let Some(h) = hctx.as_mut() {
+                        let stored = &values[idx - 1];
+                        h.update_field(key, stored, idx);
+                        let mut stderr = std::io::stderr();
+                        if let Ok(Some(SidebarOutcome::Select(uuid))) =
+                            build_history::check_ctrl_h(&mut stderr, &mut h.history, 100)
+                        {
+                            if uuid != h.record.uuid {
+                                return Err(BuilderError::SwitchBuild { uuid });
+                            }
+                        }
+                    }
                 }
                 Err(BuilderError::Back) => {
                     if idx == 0 {
