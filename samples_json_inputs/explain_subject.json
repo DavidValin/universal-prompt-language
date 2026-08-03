@@ -1,0 +1,19 @@
+{
+    "subject": "monads in functional programming",
+    "audience_level": "intermediate",
+    "max_words": 800,
+    "tone": "academic",
+    "include_examples": true,
+    "include_analogy": true,
+    "prerequisites": [
+        "higher-order functions",
+        "type signatures",
+        "functors"
+    ],
+    "focus_areas": [
+        "definitions",
+        "applications",
+        "common_pitfalls",
+        "further_reading"
+    ]
+}

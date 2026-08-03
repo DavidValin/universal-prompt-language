@@ -50,6 +50,8 @@ pub enum BuilderError {
     /// to `Cancelled` when there is no previous field to go back to.
     #[error("back")]
     Back,
+    #[error("validation error: {0}")]
+    Validation(String),
     /// The user opened the build-history sidebar (Ctrl+H) and chose to
     /// resume or rebuild a different build. The caller should load the
     /// prompt identified by the record with this uuid and start a new
@@ -91,7 +93,7 @@ impl PromptBuilder {
 
     /// Collect values interactively via the TUI, then render the final prompt.
     pub fn build_interactive(&self) -> Result<String, BuilderError> {
-        let values = self.collect_values(&mut None, None)?;
+        let values = self.collect_values(&mut None, None, false)?;
         self.render(&values)
     }
 
@@ -111,7 +113,7 @@ impl PromptBuilder {
             prompt_path,
             total,
         ));
-        let values = self.collect_values(&mut hctx, None)?;
+        let values = self.collect_values(&mut hctx, None, false)?;
         if let Some(h) = hctx.as_mut() {
             h.mark_built();
         }
@@ -122,9 +124,18 @@ impl PromptBuilder {
     /// defaults for already-collected fields; collection continues from the
     /// first un-collected field. History tracking continues so the resumed
     /// build can be interrupted again.
-    pub fn resume_interactive(&self, record: &BuildRecord) -> Result<String, BuilderError> {
+    ///
+    /// When `rebuild` is `true` (the record was fully built), all fields are
+    /// pre-filled and the cursor is positioned at the **last** field so the
+    /// user can review it and immediately build (or go back to edit earlier
+    /// fields).
+    pub fn resume_interactive(
+        &self,
+        record: &BuildRecord,
+        rebuild: bool,
+    ) -> Result<String, BuilderError> {
         let mut hctx = Some(HistoryContext::from_record(record));
-        let values = self.collect_values(&mut hctx, Some(&record.values))?;
+        let values = self.collect_values(&mut hctx, Some(&record.values), rebuild)?;
         if let Some(h) = hctx.as_mut() {
             h.mark_built();
         }
@@ -232,6 +243,248 @@ impl PromptBuilder {
     }
 
     // -----------------------------------------------------------------------
+    // JSON-based building (non-interactive)
+    // -----------------------------------------------------------------------
+
+    /// Build the final prompt from a JSON string of parameter values.
+    ///
+    /// The JSON root must be an object whose keys are parameter names
+    /// (matched case-insensitively against the declared names). Each value
+    /// is converted to the declared type and validated:
+    ///
+    /// - `string` / `long_string` ← JSON string
+    /// - `number` ← JSON number
+    /// - `boolean` ← JSON boolean
+    /// - `object` ← JSON object (fields matched case-insensitively; missing
+    ///   fields fall back to declared defaults)
+    /// - `list` ← JSON array (each element converted per the list's etype)
+    /// - `option_single` ← a single value matching the etype and one of the
+    ///   declared `opts`
+    /// - `option_multi` ← a JSON array where each element matches the etype
+    ///   and one of the declared `opts`
+    ///
+    /// Parameters absent from the JSON fall back to declared `def:` defaults
+    /// (or type-appropriate zeros when no `def` is declared). `object_shape`
+    /// type definitions are never expected in the JSON and are always seeded
+    /// from defaults. A JSON `null` for a key means "use the default".
+    pub fn build_from_json(&self, json: &str) -> Result<String, BuilderError> {
+        let values = self.values_from_json(json)?;
+        self.render(&values)
+    }
+
+    /// Parse a JSON string into a validated `ValueMap`, merged with declared
+    /// defaults. This is the non-interactive counterpart of `collect_values`.
+    pub fn values_from_json(&self, json: &str) -> Result<ValueMap, BuilderError> {
+        let root: serde_json::Value = serde_json::from_str(json)
+            .map_err(|e| BuilderError::Validation(format!("invalid JSON: {}", e)))?;
+        let obj = root
+            .as_object()
+            .ok_or_else(|| BuilderError::Validation("JSON root must be an object".into()))?;
+
+        let referenced = self.referenced_type_defs();
+
+        // Start with defaults for all declared variables (including
+        // object_shape type definitions, which are seeded but never expected
+        // in the JSON).
+        let mut values = self.defaults_to_values();
+
+        for (key, jval) in obj {
+            // Find the matching variable definition (case-insensitive).
+            let (declared_name, def) = self
+                .prompt
+                .variable_definitions
+                .iter()
+                .find(|(k, _)| k.to_lowercase() == key.to_lowercase())
+                .ok_or_else(|| {
+                    BuilderError::Validation(format!(
+                        "unknown parameter '{}' in JSON (not declared in prompt)",
+                        key
+                    ))
+                })?;
+
+            // object_shape types are not settable.
+            if referenced.contains(&declared_name.to_lowercase()) {
+                return Err(BuilderError::Validation(format!(
+                    "parameter '{}' is an object_shape type definition and cannot be set via JSON",
+                    key
+                )));
+            }
+
+            // null means "use default" — skip overriding.
+            if jval.is_null() {
+                continue;
+            }
+
+            let val = self.json_to_variable_value(jval, def, declared_name)?;
+            values.insert(declared_name.clone(), val);
+        }
+
+        Ok(values)
+    }
+
+    /// Convert a JSON value into a `VariableValue` according to the declared
+    /// variable definition. For objects, missing fields fall back to declared
+    /// defaults; for lists, each element is converted per the list's etype;
+    /// for options, the converted value is validated against the declared
+    /// `opts`.
+    fn json_to_variable_value(
+        &self,
+        json: &serde_json::Value,
+        def: &VariableDefinition,
+        path: &str,
+    ) -> Result<VariableValue, BuilderError> {
+        use serde_json::Value as J;
+        use VariableType as T;
+
+        match def.r#type {
+            T::String => match json {
+                J::String(s) => Ok(VariableValue::String(s.clone())),
+                _ => Err(BuilderError::Validation(format!(
+                    "parameter '{}' expects a string, got {}",
+                    path,
+                    json_type_name(json)
+                ))),
+            },
+            T::LongString => match json {
+                J::String(s) => Ok(VariableValue::LongString(s.clone())),
+                _ => Err(BuilderError::Validation(format!(
+                    "parameter '{}' expects a long_string, got {}",
+                    path,
+                    json_type_name(json)
+                ))),
+            },
+            T::Number => match json {
+                J::Number(n) => n.as_f64().map(VariableValue::Number).ok_or_else(|| {
+                    BuilderError::Validation(format!(
+                        "parameter '{}' expects a number, got {}",
+                        path,
+                        json
+                    ))
+                }),
+                _ => Err(BuilderError::Validation(format!(
+                    "parameter '{}' expects a number, got {}",
+                    path,
+                    json_type_name(json)
+                ))),
+            },
+            T::Boolean => match json {
+                J::Bool(b) => Ok(VariableValue::Boolean(*b)),
+                _ => Err(BuilderError::Validation(format!(
+                    "parameter '{}' expects a boolean, got {}",
+                    path,
+                    json_type_name(json)
+                ))),
+            },
+            T::OptionSingle => {
+                let val = self.json_to_option_element(json, def, path)?;
+                if let Some(opts) = &def.options {
+                    if !opts.iter().any(|o| values_equal(o, &val)) {
+                        return Err(BuilderError::Validation(format!(
+                            "value for '{}' is not one of the declared opts",
+                            path
+                        )));
+                    }
+                }
+                Ok(val)
+            }
+            T::OptionMulti => match json {
+                J::Array(arr) => {
+                    let mut items = Vec::with_capacity(arr.len());
+                    for (i, elem) in arr.iter().enumerate() {
+                        let ipath = format!("{}[{}]", path, i);
+                        let val = self.json_to_option_element(elem, def, &ipath)?;
+                        if let Some(opts) = &def.options {
+                            if !opts.iter().any(|o| values_equal(o, &val)) {
+                                return Err(BuilderError::Validation(format!(
+                                    "element {} of '{}' is not one of the declared opts",
+                                    i,
+                                    path
+                                )));
+                            }
+                        }
+                        items.push(val);
+                    }
+                    Ok(VariableValue::List(items))
+                }
+                _ => Err(BuilderError::Validation(format!(
+                    "parameter '{}' expects an array, got {}",
+                    path,
+                    json_type_name(json)
+                ))),
+            },
+            T::Object => match json {
+                J::Object(obj) => {
+                    let ofields = def.ofields_definitions.as_ref().ok_or_else(|| {
+                        BuilderError::TypeError(format!(
+                            "object '{}' has no ofields block",
+                            path
+                        ))
+                    })?;
+                    let mut map = ObjectMap::new();
+                    for (fname, fdef) in ofields {
+                        let fpath = format!("{}.{}", path, fname);
+                        match obj
+                            .iter()
+                            .find(|(k, _)| k.to_lowercase() == fname.to_lowercase())
+                            .map(|(_, v)| v)
+                        {
+                            Some(jv) if !jv.is_null() => {
+                                let val = self.json_to_variable_value(jv, fdef, &fpath)?;
+                                map.insert(fname.clone(), val);
+                            }
+                            _ => {
+                                map.insert(fname.clone(), self.default_value(&fpath, fdef));
+                            }
+                        }
+                    }
+                    Ok(VariableValue::Object(map))
+                }
+                _ => Err(BuilderError::Validation(format!(
+                    "parameter '{}' expects an object, got {}",
+                    path,
+                    json_type_name(json)
+                ))),
+            },
+            T::List => match json {
+                J::Array(arr) => {
+                    let etype = def.element_type.unwrap_or(VariableType::String);
+                    let elem_def = synthesize_elem_def(def, etype);
+                    let mut items = Vec::with_capacity(arr.len());
+                    for (i, elem) in arr.iter().enumerate() {
+                        let ipath = format!("{}[{}]", path, i);
+                        let val = self.json_to_variable_value(elem, &elem_def, &ipath)?;
+                        items.push(val);
+                    }
+                    Ok(VariableValue::List(items))
+                }
+                _ => Err(BuilderError::Validation(format!(
+                    "parameter '{}' expects an array, got {}",
+                    path,
+                    json_type_name(json)
+                ))),
+            },
+            T::ObjectShape => Err(BuilderError::Validation(format!(
+                "parameter '{}' is an object_shape and cannot be set via JSON",
+                path
+            ))),
+        }
+    }
+
+    /// Convert a JSON value into a `VariableValue` according to an option
+    /// type's element type. The element definition is synthesized from the
+    /// option's etype and resolved ofields.
+    fn json_to_option_element(
+        &self,
+        json: &serde_json::Value,
+        def: &VariableDefinition,
+        path: &str,
+    ) -> Result<VariableValue, BuilderError> {
+        let etype = def.element_type.unwrap_or(VariableType::String);
+        let elem_def = synthesize_elem_def(def, etype);
+        self.json_to_variable_value(json, &elem_def, path)
+    }
+
+    // -----------------------------------------------------------------------
     // Interactive collection
     // -----------------------------------------------------------------------
 
@@ -249,6 +502,7 @@ impl PromptBuilder {
         &self,
         hctx: &mut Option<HistoryContext>,
         resume: Option<&ValueMap>,
+        rebuild: bool,
     ) -> Result<ValueMap, BuilderError> {
         // Top-level `object_shape` variables are pure type definitions (RFC
         // §3.1/§3.4): they declare a reusable shape and are never prompted
@@ -278,6 +532,17 @@ impl PromptBuilder {
                     break;
                 }
             }
+        }
+
+        // Show already-collected fields before continuing, and position
+        // the cursor for the rebuild case.
+        if idx > 0 {
+            print_collected_summary(&defs, &values, idx);
+        }
+        if rebuild && idx >= defs.len() {
+            // All fields were previously collected — position at the
+            // last field so the user can review it before building.
+            idx = defs.len() - 1;
         }
 
         while idx < defs.len() {
@@ -696,6 +961,47 @@ fn label(path: &str, _def: &VariableDefinition) -> String {
     format!("> {}", path)
 }
 
+/// Print a summary of already-collected fields on stderr so the user can
+/// review previous answers before the current field prompt appears.
+/// `up_to` is the number of fields (from the start of `defs`) that have
+/// already been collected; their values are taken from `values`.
+fn print_collected_summary(
+    defs: &[(String, &VariableDefinition)],
+    values: &[VariableValue],
+    up_to: usize,
+) {
+    if up_to == 0 {
+        return;
+    }
+    let mut err = std::io::stderr();
+    let _ = execute!(
+        err,
+        SetForegroundColor(Color::DarkGrey),
+        Print("Previously collected:\n"),
+        ResetColor,
+    );
+    for ((key, _), val) in defs.iter().zip(values).take(up_to) {
+        let val_str = stringify(val).unwrap_or_default();
+        let display: String = if val_str.chars().count() > 60 {
+            let kept: String = val_str.chars().take(57).collect();
+            format!("{kept}...")
+        } else {
+            val_str
+        };
+        let _ = execute!(
+            err,
+            SetForegroundColor(Color::DarkGrey),
+            Print(format!("  {key} = ")),
+            SetForegroundColor(Color::White),
+            Print(&display),
+            Print("\n"),
+            ResetColor,
+        );
+    }
+    let _ = execute!(err, Print("\n"));
+    let _ = err.flush();
+}
+
 fn desc(def: &VariableDefinition) -> Option<&str> {
     def.desc.as_ref().filter(|d| !d.is_empty()).map(|d| d.as_str())
 }
@@ -722,6 +1028,34 @@ fn option_type_zero(etype: VariableType) -> VariableValue {
         VariableType::Number => VariableValue::Number(0.0),
         VariableType::Object => VariableValue::Object(ObjectMap::new()),
         _ => VariableValue::String(String::new()),
+    }
+}
+
+/// Synthesize a `VariableDefinition` for a list/option element from the
+/// parent definition's resolved etype and ofields. This mirrors the element
+/// definition synthesized by `collect_list`.
+fn synthesize_elem_def(def: &VariableDefinition, etype: VariableType) -> VariableDefinition {
+    VariableDefinition {
+        r#type: etype,
+        desc: None,
+        options: def.options.clone(),
+        element_type: def.element_type,
+        element_ref: None,
+        label: None,
+        type_ref: None,
+        ofields_definitions: def.ofields_definitions.clone(),
+    }
+}
+
+/// Human-readable name for a JSON value type, used in validation error messages.
+fn json_type_name(json: &serde_json::Value) -> &'static str {
+    match json {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "boolean",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::Object(_) => "object",
     }
 }
 
@@ -1300,5 +1634,392 @@ x
         let builder = PromptBuilder::new(parse(upl));
         let referenced = builder.referenced_type_defs();
         assert!(referenced.contains("feature"), "option_single etype should flag feature: {:?}", referenced);
+    }
+
+    // --- build_from_json unit tests ---
+
+    fn jbuild(upl: &str, json: &str) -> Result<String, BuilderError> {
+        let prompt = parse(upl);
+        PromptBuilder::new(prompt).build_from_json(json)
+    }
+
+    #[test]
+    fn json_simple_string_override() {
+        let upl = "\
+--
+name: p
+params:
+  name:
+    type: string
+    def: \"world\"
+--
+Hello, [[[NAME]]]!
+--
+";
+        let out = jbuild(upl, r#"{"name": "Ada"}"#).unwrap();
+        assert_eq!(out, "Hello, Ada!\n");
+    }
+
+    #[test]
+    fn json_missing_param_uses_default() {
+        let upl = "\
+--
+name: p
+params:
+  name:
+    type: string
+    def: \"world\"
+  n:
+    type: number
+    def: 7
+--
+Hi [[[NAME]]]! n=[[[N]]]
+--
+";
+        let out = jbuild(upl, r#"{"name": "Bob"}"#).unwrap();
+        assert_eq!(out, "Hi Bob! n=7\n");
+    }
+
+    #[test]
+    fn json_null_uses_default() {
+        let upl = "\
+--
+name: p
+params:
+  name:
+    type: string
+    def: \"world\"
+--
+Hi [[[NAME]]]
+--
+";
+        let out = jbuild(upl, r#"{"name": null}"#).unwrap();
+        assert_eq!(out, "Hi world\n");
+    }
+
+    #[test]
+    fn json_wrong_type_is_error() {
+        let upl = "\
+--
+name: p
+params:
+  n:
+    type: number
+    def: 0
+--
+n=[[[N]]]
+--
+";
+        let res = jbuild(upl, r#"{"n": "hello"}"#);
+        assert!(matches!(res, Err(BuilderError::Validation(_))));
+    }
+
+    #[test]
+    fn json_unknown_param_is_error() {
+        let upl = "\
+--
+name: p
+params:
+  a:
+    type: string
+--
+x
+--
+";
+        let res = jbuild(upl, r#"{"b": "y"}"#);
+        assert!(matches!(res, Err(BuilderError::Validation(_))));
+    }
+
+    #[test]
+    fn json_object_shape_in_json_is_error() {
+        let upl = "\
+--
+name: p
+params:
+  server:
+    type: object_shape
+    ofields:
+      host:
+        type: string
+  servers:
+    type: list
+    etype: server
+--
+x
+--
+";
+        let res = jbuild(upl, r#"{"server": {"host": "x"}}"#);
+        assert!(matches!(res, Err(BuilderError::Validation(_))));
+    }
+
+    #[test]
+    fn json_option_single_valid() {
+        let upl = "\
+--
+name: p
+params:
+  env:
+    type: option_single
+    opts:
+      - \"dev\"
+      - \"prod\"
+    def: \"dev\"
+--
+env=[[[ENV]]]
+--
+";
+        let out = jbuild(upl, r#"{"env": "prod"}"#).unwrap();
+        assert_eq!(out, "env=prod\n");
+    }
+
+    #[test]
+    fn json_option_single_invalid_value() {
+        let upl = "\
+--
+name: p
+params:
+  env:
+    type: option_single
+    opts:
+      - \"dev\"
+      - \"prod\"
+    def: \"dev\"
+--
+env=[[[ENV]]]
+--
+";
+        let res = jbuild(upl, r#"{"env": "staging"}"#);
+        assert!(matches!(res, Err(BuilderError::Validation(_))));
+    }
+
+    #[test]
+    fn json_option_multi_valid() {
+        let upl = "\
+--
+name: p
+params:
+  tags:
+    type: option_multi
+    etype: string
+    opts:
+      - \"a\"
+      - \"b\"
+      - \"c\"
+    def: [\"a\"]
+--
+tags: [[[TAGS]]]
+--
+";
+        let out = jbuild(upl, r#"{"tags": ["b", "c"]}"#).unwrap();
+        assert_eq!(out, "tags: b, c\n");
+    }
+
+    #[test]
+    fn json_option_multi_invalid_element() {
+        let upl = "\
+--
+name: p
+params:
+  tags:
+    type: option_multi
+    etype: string
+    opts:
+      - \"a\"
+      - \"b\"
+--
+tags: [[[TAGS]]]
+--
+";
+        let res = jbuild(upl, r#"{"tags": ["a", "z"]}"#);
+        assert!(matches!(res, Err(BuilderError::Validation(_))));
+    }
+
+    #[test]
+    fn json_object_partial_uses_defaults() {
+        let upl = "\
+--
+name: p
+params:
+  cfg:
+    type: object
+    ofields:
+      host:
+        type: string
+        def: \"localhost\"
+      port:
+        type: number
+        def: 8080
+--
+host=[[[CFG.HOST]]] port=[[[CFG.PORT]]]
+--
+";
+        let out = jbuild(upl, r#"{"cfg": {"host": "db.local"}}"#).unwrap();
+        assert_eq!(out, "host=db.local port=8080\n");
+    }
+
+    #[test]
+    fn json_list_of_objects() {
+        let upl = "\
+--
+name: p
+params:
+  server:
+    type: object_shape
+    ofields:
+      host:
+        type: string
+      port:
+        type: number
+  servers:
+    type: list
+    etype: server
+--
+{{{for S in SERVERS}}}- [[[S.HOST]]]:[[[S.PORT]]]
+{{{end for}}}
+--
+";
+        let json = r#"{"servers": [{"host": "a", "port": 80}, {"host": "b", "port": 443}]}"#;
+        let out = jbuild(upl, json).unwrap();
+        assert_eq!(out, "- a:80\n- b:443\n");
+    }
+
+    #[test]
+    fn json_list_of_strings() {
+        let upl = "\
+--
+name: p
+params:
+  items:
+    type: list
+    etype: string
+    def: []
+--
+{{{for I in ITEMS}}}- [[[I]]]
+{{{end for}}}
+--
+";
+        let out = jbuild(upl, r#"{"items": ["x", "y"]}"#).unwrap();
+        assert_eq!(out, "- x\n- y\n");
+    }
+
+    #[test]
+    fn json_invalid_json_is_error() {
+        let upl = "\
+--
+name: p
+params:
+  a:
+    type: string
+--
+x
+--
+";
+        let res = jbuild(upl, "{not json");
+        assert!(matches!(res, Err(BuilderError::Validation(_))));
+    }
+
+    #[test]
+    fn json_non_object_root_is_error() {
+        let upl = "\
+--
+name: p
+params:
+  a:
+    type: string
+--
+x
+--
+";
+        let res = jbuild(upl, "[1, 2, 3]");
+        assert!(matches!(res, Err(BuilderError::Validation(_))));
+    }
+
+    #[test]
+    fn json_case_insensitive_keys() {
+        let upl = "\
+--
+name: p
+params:
+  name:
+    type: string
+    def: \"world\"
+--
+Hi [[[NAME]]]
+--
+";
+        let out = jbuild(upl, r#"{"NAME": "Bob"}"#).unwrap();
+        assert_eq!(out, "Hi Bob\n");
+    }
+
+    #[test]
+    fn json_nested_object_with_subobject() {
+        let upl = "\
+--
+name: p
+params:
+  cfg:
+    type: object
+    ofields:
+      host:
+        type: string
+        def: \"localhost\"
+      auth:
+        type: object
+        ofields:
+          type:
+            type: string
+            def: \"bearer\"
+          token:
+            type: string
+            def: \"\"
+--
+host=[[[CFG.HOST]]] auth.type=[[[CFG.AUTH.TYPE]]] token=[[[CFG.AUTH.TOKEN]]]
+--
+";
+        let json = r#"{"cfg": {"host": "x.test", "auth": {"token": "abc"}}}"#;
+        let out = jbuild(upl, json).unwrap();
+        assert_eq!(out, "host=x.test auth.type=bearer token=abc\n");
+    }
+
+    #[test]
+    fn json_empty_object_uses_all_defaults() {
+        let upl = "\
+--
+name: p
+params:
+  name:
+    type: string
+    def: \"world\"
+  n:
+    type: number
+    def: 42
+--
+Hi [[[NAME]]]! n=[[[N]]]
+--
+";
+        let out = jbuild(upl, "{}").unwrap();
+        assert_eq!(out, "Hi world! n=42\n");
+    }
+
+    #[test]
+    fn json_option_single_number_etype() {
+        let upl = "\
+--
+name: p
+params:
+  port:
+    type: option_single
+    etype: number
+    opts:
+      - 80
+      - 443
+      - 8080
+    def: 443
+--
+port=[[[PORT]]]
+--
+";
+        let out = jbuild(upl, r#"{"port": 80}"#).unwrap();
+        assert_eq!(out, "port=80\n");
     }
 }

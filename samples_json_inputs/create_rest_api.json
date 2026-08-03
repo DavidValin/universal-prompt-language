@@ -1,0 +1,73 @@
+{
+    "language": "ruby",
+    "api_name": "Library API",
+    "api_version": "v2",
+    "resources": [
+        {
+            "name": "books",
+            "actions": [
+                "POST",
+                "GET",
+                "PUT",
+                "DELETE"
+            ],
+            "fields": [
+                {
+                    "name": "id",
+                    "type": "string",
+                    "required": true
+                },
+                {
+                    "name": "title",
+                    "type": "string",
+                    "required": true
+                },
+                {
+                    "name": "author",
+                    "type": "string",
+                    "required": true
+                },
+                {
+                    "name": "isbn",
+                    "type": "string",
+                    "required": false
+                },
+                {
+                    "name": "published",
+                    "type": "boolean",
+                    "required": false
+                }
+            ]
+        },
+        {
+            "name": "loans",
+            "actions": [
+                "POST",
+                "GET",
+                "PATCH"
+            ],
+            "fields": [
+                {
+                    "name": "id",
+                    "type": "string",
+                    "required": true
+                },
+                {
+                    "name": "book_id",
+                    "type": "string",
+                    "required": true
+                },
+                {
+                    "name": "borrower",
+                    "type": "string",
+                    "required": true
+                },
+                {
+                    "name": "returned",
+                    "type": "boolean",
+                    "required": false
+                }
+            ]
+        }
+    ]
+}

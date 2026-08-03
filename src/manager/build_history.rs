@@ -96,6 +96,26 @@ impl BuildRecord {
     pub fn is_resumable(&self) -> bool {
         self.status == BuildStatus::InProgress && self.collected_fields < self.total_fields
     }
+
+    /// Export the record's collected values as pretty JSON to
+    /// `~/.upl/build_exports/<prompt_sha256>_<date>.json`, where `<date>` is
+    /// the current time formatted as `YYYYMMDD_HHMM`. The exported file
+    /// contains only the parameter values and is directly reusable with
+    /// `upl build-from-json`. Returns the full path of the written file.
+    pub fn export_to_json(&self) -> io::Result<PathBuf> {
+        let dir = build_exports_dir()?;
+        fs::create_dir_all(&dir)?;
+
+        let date = format_date_for_filename(now_secs());
+        let filename = format!("{}_{}.json", self.prompt_sha256, date);
+        let path = dir.join(filename);
+
+        let json = serde_json::to_string_pretty(&self.values)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        fs::write(&path, json)?;
+
+        Ok(path)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -235,6 +255,14 @@ fn history_path() -> io::Result<PathBuf> {
     Ok(PathBuf::from(home).join(".upl").join("build_history.json"))
 }
 
+/// Directory where exported build records are written.
+fn build_exports_dir() -> io::Result<PathBuf> {
+    let home = std::env::var("HOME").map_err(|_| {
+        io::Error::new(io::ErrorKind::NotFound, "HOME not set")
+    })?;
+    Ok(PathBuf::from(home).join(".upl").join("build_exports"))
+}
+
 /// Generate a UUID v4-style string (random hex, formatted as
 /// 8-4-4-4-12).
 fn generate_uuid() -> String {
@@ -293,6 +321,28 @@ fn format_date(secs: u64) -> String {
     )
 }
 
+/// Format a Unix timestamp as `YYYYMMDD_HHMM` — filename-safe (no spaces or
+/// colons), suitable for use in export filenames.
+fn format_date_for_filename(secs: u64) -> String {
+    let days = secs / 86400;
+    let rem = secs % 86400;
+    let hour = rem / 3600;
+    let minute = (rem % 3600) / 60;
+
+    let z = days as i64 + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if m <= 2 { y + 1 } else { y };
+
+    format!("{:04}{:02}{:02}_{:02}{:02}", year, m, d, hour, minute)
+}
+
 /// Truncate or pad `s` to exactly `w` character cells.
 fn truncate_pad(s: &str, w: usize) -> String {
     let n = s.chars().count();
@@ -328,6 +378,7 @@ pub enum SidebarOutcome {
 /// records, and restores the cursor on exit. The user navigates with Up/Down
 /// and presses Enter to select a record (resume if in-progress, rebuild if
 /// built), or Esc/q to close. Ctrl+D deletes the selected record.
+/// Ctrl+E exports the selected record's values to a JSON file.
 pub fn run_sidebar<W: Write>(
     stdout: &mut W,
     history: &mut BuildHistory,
@@ -337,11 +388,13 @@ pub fn run_sidebar<W: Write>(
     let mut selected: usize = 0;
     let mut top: usize = 0;
     let (mut cols, mut lines) = terminal::size()?;
+    let mut status_msg: Option<String> = None;
 
     let result = (|| -> io::Result<SidebarOutcome> {
         loop {
-            render_sidebar(stdout, history, &mut selected, &mut top, cols, lines)?;
+            render_sidebar(stdout, history, &mut selected, &mut top, cols, lines, &status_msg)?;
             stdout.flush()?;
+            status_msg = None;
 
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
@@ -379,6 +432,22 @@ pub fn run_sidebar<W: Write>(
                                 selected = selected.saturating_sub(1);
                             }
                         }
+                        KeyCode::Char('e') if ctrl && !history.records().is_empty() => {
+                            if let Some(record) = history.records().get(selected) {
+                                match record.export_to_json() {
+                                    Ok(path) => {
+                                        status_msg = Some(format!(
+                                            "Exported to {}",
+                                            path.display()
+                                        ));
+                                    }
+                                    Err(e) => {
+                                        status_msg =
+                                            Some(format!("Export failed: {}", e));
+                                    }
+                                }
+                            }
+                        }
                         KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') => {
                             return Ok(SidebarOutcome::Close);
                         }
@@ -399,7 +468,7 @@ pub fn run_sidebar<W: Write>(
 }
 
 fn list_height(lines: u16) -> usize {
-    // Header (2) + footer (1) + separator (1) = 4 rows of chrome.
+    // Header (1) + separator (1) + column header (1) + column separator (1) + footer (1) = 5 rows of chrome.
     (lines as usize).saturating_sub(5).max(1)
 }
 
@@ -410,6 +479,7 @@ fn render_sidebar<W: Write>(
     top: &mut usize,
     cols: u16,
     lines: u16,
+    status_msg: &Option<String>,
 ) -> io::Result<()> {
     let records = history.records();
     let lh = list_height(lines);
@@ -444,21 +514,11 @@ fn render_sidebar<W: Write>(
         SetAttribute(Attribute::Reset),
     )?;
 
-    let count = records.len();
-    let subtitle = format!(" {} record(s) · resume in-progress · rebuild completed ", count);
-    queue!(
-        stdout,
-        cursor::MoveTo(0, 1),
-        SetForegroundColor(Color::DarkGrey),
-        Print(&subtitle),
-        ResetColor,
-    )?;
-
     // Separator.
     let sep_width = cols as usize;
     queue!(
         stdout,
-        cursor::MoveTo(0, 2),
+        cursor::MoveTo(0, 1),
         SetForegroundColor(Color::DarkGrey),
         Print(&"─".repeat(sep_width)),
         ResetColor,
@@ -480,12 +540,28 @@ fn render_sidebar<W: Write>(
     );
     queue!(
         stdout,
-        cursor::MoveTo(0, 3),
+        cursor::MoveTo(0, 2),
         SetAttribute(Attribute::Bold),
-        SetForegroundColor(Color::DarkGrey),
+        SetForegroundColor(Color::Cyan),
         Print(truncate_pad(&header, sep_width)),
         ResetColor,
         SetAttribute(Attribute::Reset),
+    )?;
+
+    // Separator below the column header.
+    let col_sep = format!(
+        " {}  {}  {}  {}",
+        truncate_pad(&"-".repeat(w_status), w_status),
+        truncate_pad(&"-".repeat(w_date), w_date),
+        truncate_pad(&"-".repeat(w_prompt), w_prompt),
+        truncate_pad(&"-".repeat(w_progress), w_progress),
+    );
+    queue!(
+        stdout,
+        cursor::MoveTo(0, 3),
+        SetForegroundColor(Color::DarkGrey),
+        Print(truncate_pad(&col_sep, sep_width)),
+        ResetColor,
     )?;
 
     // Records.
@@ -566,13 +642,20 @@ fn render_sidebar<W: Write>(
 
     // Footer.
     let footer_y = lines.saturating_sub(1);
-    let footer = "↑/↓ navigate · Enter resume/rebuild · Ctrl+D delete · Esc/q close";
+    let footer = "↑/↓ navigate · Enter resume/rebuild · Ctrl+E export · Ctrl+D delete · Esc/q close";
     queue!(
         stdout,
         cursor::MoveTo(0, footer_y),
         terminal::Clear(terminal::ClearType::CurrentLine),
-        SetForegroundColor(Color::DarkGrey),
-        Print(truncate_pad(footer, cols as usize)),
+        SetForegroundColor(if status_msg.is_some() {
+            Color::Green
+        } else {
+            Color::DarkGrey
+        }),
+        Print(truncate_pad(
+            status_msg.as_deref().unwrap_or(footer),
+            cols as usize,
+        )),
         ResetColor,
         cursor::MoveTo(0, footer_y),
     )?;
@@ -673,5 +756,50 @@ mod tests {
         // 2024-01-01 00:00:00 UTC = 1704067200
         let s = format_date(1704067200);
         assert!(s.starts_with("2024-01-01"));
+    }
+
+    #[test]
+    fn format_date_for_filename_basic() {
+        // 2024-01-01 00:00:00 UTC = 1704067200
+        let s = format_date_for_filename(1704067200);
+        assert!(s.starts_with("20240101_0000"));
+        // No spaces or colons.
+        assert!(!s.contains(' ') && !s.contains(':'));
+    }
+
+    #[test]
+    fn export_to_json_writes_file() {
+        // Use a fake HOME so the test never touches the real one.
+        let tmp = std::env::temp_dir().join("upl_export_test");
+        std::fs::create_dir_all(&tmp).unwrap();
+        let prev_home = std::env::var_os("HOME");
+        std::env::set_var("HOME", &tmp);
+
+        let mut rec = BuildRecord::new("deadbeef", "my_prompt", "/tmp/p.txt", 2);
+        rec.values
+            .insert("name".to_string(), VariableValue::String("hello".to_string()));
+        rec.values
+            .insert("count".to_string(), VariableValue::Number(42.0));
+        rec.collected_fields = 2;
+        rec.status = BuildStatus::Built;
+
+        let path = rec.export_to_json().unwrap();
+
+        // Filename should contain the sha256 and end with .json.
+        let fname = path.file_name().unwrap().to_string_lossy().to_string();
+        assert!(fname.starts_with("deadbeef_"));
+        assert!(fname.ends_with(".json"));
+
+        // File content should be valid JSON with the two values.
+        let content = std::fs::read_to_string(&path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed["name"], "hello");
+        assert_eq!(parsed["count"], 42.0);
+
+        // Cleanup.
+        let _ = std::fs::remove_dir_all(&tmp);
+        if let Some(h) = prev_home {
+            std::env::set_var("HOME", h);
+        }
     }
 }

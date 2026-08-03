@@ -1,0 +1,16 @@
+{
+    "name": "As a returning user, when I log in with an expired password, I want to be able to reset it and regain access to my account",
+    "acceptance_criteria": [
+        "An expired password must trigger the reset flow instead of a hard login failure",
+        "The reset email must be sent within 5 seconds of the request",
+        "The new password must meet the configured complexity rules",
+        "After reset, the user is signed in without re-entering credentials"
+    ],
+    "implementation_rules": [
+        "Do not store passwords in plain text",
+        "Reuse the existing email service for the reset link",
+        "Add integration tests for the expired-password path"
+    ],
+    "current_status": "The login endpoint exists at POST /api/login and uses bcrypt for password verification. There is no password-reset flow yet.",
+    "extra_details": "Reset tokens should expire after 15 minutes and be single-use. Make sure you understand the codebase before implementing the changes or making assumptions."
+}

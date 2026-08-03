@@ -1,0 +1,18 @@
+{
+    "subject": "linear algebra",
+    "level": "undergraduate",
+    "format": "lecture",
+    "duration_minutes": 60,
+    "include_exercises": true,
+    "include_summary": true,
+    "learning_goals": [
+        "Define vectors and matrices and explain matrix multiplication",
+        "Connect linear transformations to their matrix representations",
+        "Solve a small system of linear equations by Gaussian elimination"
+    ],
+    "materials": {
+        "has_calculator": false,
+        "has_internet": true,
+        "preferred_language": "English"
+    }
+}

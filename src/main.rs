@@ -15,8 +15,8 @@ use inquire::ui::{Color as InquireColor, RenderConfig, StyleSheet};
 
 use universal_prompt_language::upl::builder::PromptBuilder;
 use universal_prompt_language::manager::ui_prompts_list;
-use universal_prompt_language::upl::parser::PromptParser;
-use universal_prompt_language::repository::protocol::Visibility;
+use universal_prompt_language::upl::parser::{PromptParser, has_valid_extension, validate_prompt_file};
+use universal_prompt_language::repository::protocol::{upl_home, Visibility};
 use universal_prompt_language::repository::client;
 use universal_prompt_language::repository::server;
 use universal_prompt_language::editor::ui_prompt_editor;
@@ -35,6 +35,7 @@ fn usage(prog: &str) {
     eprintln!("Usage:");
     eprintln!("  {prog} [build|b] [<folder> | <prompt.upl|txt>] [--no-history|-nh]");
     eprintln!("  {prog} [build|b] --no-input <prompt.upl|txt>");
+    eprintln!("  {prog} build-from-json <prompt_name|prompt_file.txt> <params_values.json>");
     eprintln!("  {prog} init");
     eprintln!("  {prog} login");
     eprintln!("  {prog} push <prompt.upl|txt> [--visibility public|private]");
@@ -48,6 +49,7 @@ fn usage(prog: &str) {
     eprintln!();
     eprintln!("Commands:");
     eprintln!("  build (alias: b)  Browse a prompt library or build a single prompt file.");
+    eprintln!("  build-from-json   Build a prompt from a JSON file of parameter values (non-interactive, validated).");
     eprintln!("  init              Create a new UPL prompt from the skeleton in the editor.");
     eprintln!("  login             Log in to the configured repository (stores a session token).");
     eprintln!("  push             Push a local prompt to the repository (uses its `name` as name).");
@@ -209,6 +211,63 @@ fn run_build(args: &[String], prog: &str) -> Result<(), Box<dyn std::error::Erro
         usage(prog);
         Err(format!("not a file or folder: {}", positional[0]).into())
     }
+}
+
+/// Resolve a prompt specification into a file path. If the spec has a valid
+/// UPL extension and exists as a file, it is used directly. Otherwise the
+/// spec is treated as a prompt name and resolved in `~/.upl/prompts/`.
+fn resolve_prompt_path(spec: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let p = Path::new(spec);
+    if has_valid_extension(p) && p.is_file() {
+        return Ok(spec.to_string());
+    }
+    let home = upl_home()?;
+    for ext in &["txt", "upl"] {
+        let candidate = home.join("prompts").join(format!("{}.{}", spec, ext));
+        if candidate.is_file() {
+            return Ok(candidate.display().to_string());
+        }
+    }
+    Err(format!(
+        "could not resolve prompt '{}' (not an existing file and not found in ~/.upl/prompts/)",
+        spec
+    )
+    .into())
+}
+
+/// `upl build-from-json <prompt_name|prompt_file.txt> <params_values.json>`
+///
+/// Loads a UPL prompt (by name from `~/.upl/prompts/` or by file path),
+/// reads a JSON file of parameter values, validates them against the
+/// prompt's declared parameter definitions, and renders the final prompt
+/// to stdout. Missing parameters fall back to declared `def:` defaults.
+fn run_build_from_json(args: &[String], prog: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if args.len() != 2 {
+        usage(prog);
+        return Err(
+            "usage: upl build-from-json <prompt_name|prompt_file.txt> <params_values.json>".into(),
+        );
+    }
+
+    let prompt_spec = &args[0];
+    let json_path = &args[1];
+
+    let prompt_file_path = resolve_prompt_path(prompt_spec)?;
+
+    let content = read_file(&prompt_file_path)?;
+    let prompt = PromptParser::parse(&content)?;
+    validate_prompt_file(&prompt, Path::new(&prompt_file_path))
+        .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
+
+    let json_content = read_file(json_path)?;
+
+    let builder = PromptBuilder::new(prompt);
+    let rendered = builder
+        .build_from_json(&json_content)
+        .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
+
+    emit_prompt(&rendered);
+    Ok(())
 }
 
 fn run_login(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
@@ -491,6 +550,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     match args[1].as_str() {
         "build" | "b" => run_build(&args[2..], prog),
+        "build-from-json" => run_build_from_json(&args[2..], prog),
         "--no-history" | "-nh" => run_build(&args[1..], prog),
         "init" => run_init(),
         "login" => run_login(&args[2..]),

@@ -1,0 +1,10 @@
+{
+    "article_content": "The quick brown fox jumps over the lazy dog. This sentence has been used for decades to test typewriters, yet few recall its origins. It contains every letter of the alphabet, which is why it endures. Some argue it is a relic, but its utility remains unquestionable in a digital age that still depends on fonts and keyboards.",
+    "audience": "phd",
+    "expected_tone": "academic",
+    "review_subjects": [
+        "ortography",
+        "tone",
+        "contradictions"
+    ]
+}

@@ -328,7 +328,9 @@ fn render_list<W: Write>(
     };
 
     let layout = compute_layout(cols as usize, longest_title);
-    let header_y = 0u16;
+    let title_y = 0u16;
+    let sep1_y = 1u16;
+    let header_y = 2u16;
     let separator_y = header_y + 1;
     let body_start = header_y + 2;
     let footer_y = lines.saturating_sub(1);
@@ -362,9 +364,20 @@ fn render_list<W: Write>(
     }
 
     // Render
+    let sep_width = cols as usize;
     queue! {
         stdout,
         Clear(ClearType::All),
+        cursor::MoveTo(INDENT as u16, title_y),
+        SetAttribute(Attribute::Bold),
+        SetForegroundColor(Color::Cyan),
+        Print("UPL Prompts"),
+        ResetColor,
+        SetAttribute(Attribute::Reset),
+        cursor::MoveTo(0, sep1_y),
+        SetForegroundColor(Color::DarkGrey),
+        Print(&"─".repeat(sep_width)),
+        ResetColor,
         cursor::MoveTo(INDENT as u16, header_y),
         SetAttribute(Attribute::Bold),
         SetForegroundColor(Color::Cyan),
@@ -700,12 +713,7 @@ pub fn run(folder: Option<&str>, no_history: bool) -> Result<(), ListError> {
                     let path = PathBuf::from(&record.prompt_path);
                     let title = record.prompt_name.clone();
                     let sha256 = record.prompt_sha256.clone();
-                    let resume = if record.is_resumable() {
-                        Some(record)
-                    } else {
-                        None
-                    };
-                    break (path, sha256, title, resume);
+                    break (path, sha256, title, Some(record));
                 }
                 Ok(TuiOutcome::Quit) => {
                     let _ = execute!(io::stderr(), LeaveAlternateScreen);
@@ -758,7 +766,8 @@ pub fn run(folder: Option<&str>, no_history: bool) -> Result<(), ListError> {
             let rendered = if no_history {
                 builder.build_interactive()
             } else if let Some(record) = &current_resume {
-                builder.resume_interactive(record)
+                let rebuild = !record.is_resumable();
+                builder.resume_interactive(record, rebuild)
             } else {
                 builder.build_interactive_tracked(
                     &current_path.to_string_lossy(),
@@ -776,11 +785,7 @@ pub fn run(folder: Option<&str>, no_history: bool) -> Result<(), ListError> {
                     if let Some(record) = history.get(&uuid).cloned() {
                         current_path = PathBuf::from(&record.prompt_path);
                         current_sha256 = record.prompt_sha256.clone();
-                        current_resume = if record.is_resumable() {
-                            Some(record)
-                        } else {
-                            None
-                        };
+                        current_resume = Some(record);
                         continue;
                     }
                     break Ok(None);

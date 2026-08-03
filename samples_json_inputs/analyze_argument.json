@@ -1,0 +1,22 @@
+{
+    "subject": "artificial intelligence regulation",
+    "argument": "Governments should ban the development of general-purpose AI systems because the existential risk they pose to humanity outweighs any economic benefit, and no safety framework can guarantee alignment.",
+    "stance": "oppose",
+    "audience": "academic",
+    "max_points": 4,
+    "check_logical_fallacies": true,
+    "criteria": [
+        {
+            "name": "clarity",
+            "weight": 0.2
+        },
+        {
+            "name": "evidence",
+            "weight": 0.4
+        },
+        {
+            "name": "logical_validity",
+            "weight": 0.4
+        }
+    ]
+}

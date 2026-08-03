@@ -107,6 +107,62 @@ or to browse+build in one go and pass the built prompt:
 upl | aichat
 ```
 
+## Build a prompt from a JSON file
+
+Build a prompt non-interactively by supplying parameter values in a JSON file.
+The values are validated against the prompt's declared parameters (types,
+`opts`, `ofields`) and, if valid, used to render the final prompt to stdout.
+Missing parameters fall back to declared `def:` defaults.
+
+```bash
+# Build by prompt name (resolved from ~/.upl/prompts/)
+upl build-from-json create_a_plan params.json
+
+# Build by file path
+upl build-from-json samples/create_rest_api.txt params.json
+
+# Use the bundled sample inputs (one per sample prompt)
+upl build-from-json samples/create_a_plan.txt samples_json_inputs/create_a_plan.json
+```
+
+The JSON file must be an object whose keys are parameter names (matched
+case-insensitively). A `null` value for a key means "use the default".
+
+```json
+{
+  "api_name": "Blog API",
+  "language": "ruby",
+  "resources": [
+    {
+      "name": "users",
+      "actions": ["GET", "POST", "DELETE"],
+      "fields": [
+        { "name": "id", "type": "string", "required": true },
+        { "name": "email", "type": "string", "required": true }
+      ]
+    }
+  ]
+}
+```
+
+Type mapping:
+
+| UPL type | JSON value |
+|---|---|
+| `string` / `long_string` | string |
+| `number` | number |
+| `boolean` | boolean |
+| `object` | object (missing fields use defaults) |
+| `list` | array (each element per the list's `etype`) |
+| `option_single` | a single value matching the `etype` and one of `opts` |
+| `option_multi` | array of values, each matching the `etype` and one of `opts` |
+
+The rendered prompt can be piped directly to an LLM tool:
+
+```bash
+upl build-from-json create_rest_api params.json | aichat
+```
+
 If what you want is a voice response from llm, check [vtmate](https://www.github.com/DavidValin/vtmate), example:
 
 ```bash
@@ -137,12 +193,40 @@ From the sidebar:
 |---------------|---------------------------------------------------------|
 | ↑ / ↓         | navigate through build records                           |
 | Enter         | resume (if in progress) or rebuild (if built)           |
+| Ctrl+E        | export the selected record's values to a JSON file      |
 | Ctrl+D        | delete the selected record                              |
 | Esc / q       | close the sidebar                                       |
 
-Resuming an in-progress build pre-fills the already-collected fields and
-continues from the next one. Rebuilding a completed build starts fresh with
-the same prompt.
+Resuming an in-progress build pre-fills the already-collected fields,
+displays them for review, and continues from the next un-collected field.
+Rebuilding a completed build pre-fills all fields, displays them, and
+positions the cursor at the **last** field so you can review it and
+immediately build (or press Esc to go back and edit earlier fields).
+
+### Exporting a Build
+
+Press `Ctrl+E` in the build-history sidebar to export the selected record's
+collected parameter values as a pretty JSON file. The file is written to:
+
+```
+~/.upl/build_exports/<prompt_sha256>_<YYYYMMDD_HHMM>.json
+```
+
+The exported JSON contains only the parameter values (not the build metadata)
+and is directly reusable with `upl build-from-json`:
+
+```bash
+upl build-from-json samples/create_a_plan.txt ~/.upl/build_exports/ab12..._20260803_1430.json
+```
+
+The repo also ships ready-made sample inputs in `./samples_json_inputs/` — one
+pretty-printed JSON file per prompt in `./samples/`:
+
+```bash
+# try any sample with its matching JSON input
+upl build-from-json samples/analyze_argument.txt samples_json_inputs/analyze_argument.json
+upl build-from-json samples/teach_foundations.txt samples_json_inputs/teach_foundations.json
+```
 
 ### Disabling History
 
@@ -228,6 +312,7 @@ upl pull a_user/my_nice_prompt
 ```
   init             Create a new UPL prompt from the skeleton in the editor.
   build (alias: b) Browse a prompt library or build a single prompt file.
+  build-from-json   Build a prompt from a JSON file of parameter values (validated, non-interactive).
   login            Log in to the configured repository (stores a session token).
   push             Push a local prompt to the repository (uses its `name` as name).
   pull             Pull a prompt from the repository into ~/.upl/prompts.
