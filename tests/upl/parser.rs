@@ -350,6 +350,29 @@ fn test_lowercase_ternary_branch_variable_is_error() {
 }
 
 #[test]
+fn test_bracketed_variable_in_if_condition_is_error() {
+    // `[[[VAR]]]` is not valid in condition expressions (RFC §4.2 / §4.4):
+    // conditions use bare uppercase identifiers. Only placeholders in the
+    // prompt body and ternary branch value references use `[[[...]]]`.
+    let res = Template::parse("{{{if [[[FLAG]]}}}yes{{{end if}}}");
+    assert!(matches!(res, Err(PromptParseError::InvalidConditionSyntax(_))));
+}
+
+#[test]
+fn test_bracketed_variable_in_ternary_condition_is_error() {
+    // Same rule for ternary conditions: `[[[AGE]]]` is not allowed; use `AGE`.
+    let res = Template::parse("{{{[[[AGE]]] >= 18 ? \"adult\" : \"minor\"}}}");
+    assert!(matches!(res, Err(PromptParseError::InvalidConditionSyntax(_))));
+}
+
+#[test]
+fn test_bracketed_variable_in_operator_condition_is_error() {
+    // `[[[VAR]]]` must not appear on either side of a binary operator.
+    let res = Template::parse("{{{TEXT contains [[[NEEDLE]]] ? \"y\" : \"n\"}}}");
+    assert!(matches!(res, Err(PromptParseError::InvalidConditionSyntax(_))));
+}
+
+#[test]
 fn test_uppercase_identifiers_parse_clean() {
     let res = Template::parse("{{{for ITEM in ITEMS}}}- [[[ITEM]]]\n{{{end for}}}");
     assert!(res.is_ok());

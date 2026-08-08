@@ -76,7 +76,7 @@ fn test_nested_object_placeholder() {
 #[test]
 fn test_ternary_true_branch() {
     let out = render_str(
-        "{{{[[[AGE]]] >= 18 ? \"adult\" : \"minor\"}}}",
+        "{{{AGE >= 18 ? \"adult\" : \"minor\"}}}",
         &[("age", VariableValue::Number(21.0))],
     );
     assert_eq!(out, "adult");
@@ -85,7 +85,7 @@ fn test_ternary_true_branch() {
 #[test]
 fn test_ternary_false_branch() {
     let out = render_str(
-        "{{{[[[AGE]]] >= 18 ? \"adult\" : \"minor\"}}}",
+        "{{{AGE >= 18 ? \"adult\" : \"minor\"}}}",
         &[("age", VariableValue::Number(12.0))],
     );
     assert_eq!(out, "minor");

@@ -620,10 +620,10 @@ const { username, email } = req.body;
 A conditional is written as `{{{condition ? value_if_true : value_if_false}}}`.
 
 ```text
-{{{[[[AGE]]] >= 18 ? "adult" : "minor"}}}
+{{{AGE >= 18 ? "adult" : "minor"}}}
 ```
 
-Conditions may reference variables (`[[[VAR]]]`, uppercase) or literal values, and may use any of the operators in §5. String literals may be written with either double (`"..."`) or single (`'...'`) quotes; both yield the same value. A quote character that does not start a string literal must be escaped by enclosing the literal in the other quote style.
+Conditions reference variables by their **bare, uppercase** name (`VAR`, not `[[[VAR]]]`). The `[[[...]]]` delimiters are reserved for placeholders that print a value into the prompt body (§4.1) and for ternary branch value references; they are **not** used inside condition expressions. Conditions may also use literal values and any of the operators in §5. String literals may be written with either double (`"..."`) or single (`'...'`) quotes; both yield the same value. A quote character that does not start a string literal must be escaped by enclosing the literal in the other quote style.
 
 ### 4.3 For Loops
 
@@ -646,7 +646,7 @@ A loop iterates over a list-valued variable — i.e. a `list` variable or an `op
 
 ### 4.4 If Blocks (Conditional Blocks)
 
-A conditional block renders its content only when the condition is **truthy** (see §4.6.2 for the truthiness rules). The condition variable MUST be uppercase.
+A conditional block renders its content only when the condition is **truthy** (see §4.6.2 for the truthiness rules). The condition variable MUST be uppercase and is written **bare** (without `[[[...]]]` wrapping), exactly as in ternary conditions (§4.2).
 
 ```text
 {{{if INCLUDE_AUTH}}}
@@ -691,20 +691,20 @@ A bare variable reference used as a condition (e.g. `{{{if FLAG}}}`) is truthy p
 
 ## 5. Condition Operators
 
-All operators are **left-associative** (the ternary `? :` is right-associative — see §5.1). Type checking is enforced at runtime; for example, comparing a number to a string fails evaluation. String literals may use either single (`'...'`) or double (`"..."`) quotes interchangeably.
+All operators are **left-associative** (the ternary `? :` is right-associative — see §5.1). Type checking is enforced at runtime; for example, comparing a number to a string fails evaluation. String literals may use either single (`'...'`) or double (`"..."`) quotes interchangeably. Variables in conditions are referenced by their **bare, uppercase** name (e.g. `A`, `FLAG`, `TAGS`) — **not** wrapped in `[[[...]]]`, which is reserved for placeholders in the prompt body (§4.1) and ternary branch value references.
 
 | Operator        | Meaning                              | Example                             |
 |-----------------|--------------------------------------|-------------------------------------|
-| `=`             | Equal (`==` is accepted as an alias) | `[[[A]]] = [[[B]]]`                 |
-| `!=`            | Not equal                            | `[[[X]]] != 'test'`                 |
-| `!`             | Logical NOT (unary)                  | `![[[FLAG]]]`                       |
-| `contains`      | String contains / list membership    | `[[[TEXT]]] contains "hello"` ; `[[[TAGS]]] contains "api"` |
-| `starts_with`   | String starts with                   | `[[[PATH]]] starts_with "/home"`    |
-| `ends_with`     | String ends with                     | `[[[EXT]]] ends_with ".js"`         |
-| `>=`            | Greater or equal (numbers)           | `[[[COUNT]]] >= 5`                  |
-| `>`             | Greater than (numbers)               | `[[[AGE]]] > 18`                    |
-| `<=`            | Less or equal (numbers)              | `[[[SCORE]]] <= 100`                |
-| `<`             | Less than (numbers)                  | `[[[PRICE]]] < 10`                  |
+| `=`             | Equal (`==` is accepted as an alias) | `A = B`                            |
+| `!=`            | Not equal                            | `X != 'test'`                      |
+| `!`             | Logical NOT (unary)                  | `!FLAG`                            |
+| `contains`      | String contains / list membership    | `TEXT contains "hello"` ; `TAGS contains "api"` |
+| `starts_with`   | String starts with                   | `PATH starts_with "/home"`         |
+| `ends_with`     | String ends with                     | `EXT ends_with ".js"`              |
+| `>=`            | Greater or equal (numbers)           | `COUNT >= 5`                       |
+| `>`             | Greater than (numbers)               | `AGE > 18`                         |
+| `<=`            | Less or equal (numbers)              | `SCORE <= 100`                     |
+| `<`             | Less than (numbers)                  | `PRICE < 10`                       |
 
 Notes:
 
@@ -712,7 +712,7 @@ Notes:
 - `contains` is overloaded: when either operand is a `list`, it performs membership testing (whether the list contains the other operand, compared by value); otherwise it tests whether the left string contains the right string. `starts_with` and `ends_with` apply only to strings.
 - Comparison operators (`>`, `<`, `>=`, `<=`) require both operands to be numbers; a type mismatch fails evaluation.
 - `=` and `!=` require operands of the same scalar kind (number/number, string/string-or-long_string, boolean/boolean); a mismatch fails evaluation.
-- The string operators (`contains`, `starts_with`, `ends_with`) may also be written in method-call form: `[[[VAR]]].contains("x")`, `[[[VAR]]].starts_with("x")`, `[[[VAR]]].ends_with("x")`. This form is rewritten to the infix form before evaluation and is equivalent.
+- The string operators (`contains`, `starts_with`, `ends_with`) may also be written in method-call form: `VAR.contains("x")`, `VAR.starts_with("x")`, `VAR.ends_with("x")`. This form is rewritten to the infix form before evaluation and is equivalent.
 
 ### 5.1 Operator Precedence
 

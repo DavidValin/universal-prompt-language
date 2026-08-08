@@ -6,7 +6,7 @@
 //   - Strict parsing of header, params, body
 //   - Enforces indentation (only spaces)
 //   - Validates all types, nested structures, conditionals, loops
-//   - Supports `[[[var]]]`, `{{{cond ? a : b}}}`, `{{{for x in list}}}`
+//   - Supports `[[[var]]]` placeholders, `{{{cond ? a : b}}}` ternaries, `{{{for x in list}}}`
 //   - Raises descriptive errors on invalid input
 //   - Includes `print_prompt` for debugging
 
@@ -2072,14 +2072,10 @@ fn tokenize_cond(s: &str) -> Result<Vec<Tok>, PromptParseError> {
             i += c.len_utf8();
             continue;
         }
-        if s[i..].starts_with("[[[") {
-            let end = s[i + 3..].find("]]]").ok_or_else(|| {
-                PromptParseError::InvalidConditionSyntax("unterminated variable in condition".into())
-            })?;
-            toks.push(Tok::Var(s[i + 3..i + 3 + end].trim().to_string()));
-            i = i + 3 + end + 3;
-            continue;
-        }
+        // Variables in conditions are bare uppercase identifiers (e.g. `AGE`,
+        // `FLAG`), NOT wrapped in `[[[...]]]`. The `[[[...]]]` delimiters are
+        // reserved for placeholders in the prompt body (§4.1) and ternary
+        // branch value references. A `[` encountered here is an error.
         if c == '"' || c == '\'' {
             let quote = c;
             let mut j = i + 1;

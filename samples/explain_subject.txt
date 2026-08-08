@@ -70,19 +70,19 @@ Prerequisites the reader is assumed to already understand (if any):
 {{{end for}}}
 
 Please cover the following aspects, in this order:
-{{{if [[[FOCUS_AREAS]]] contains "definitions"}}}
+{{{if FOCUS_AREAS contains "definitions"}}}
 1. A clear, concise definition of [[[SUBJECT]]].
 {{{end if}}}
-{{{if [[[FOCUS_AREAS]]] contains "history"}}}
+{{{if FOCUS_AREAS contains "history"}}}
 2. A brief history of how [[[SUBJECT]]] emerged and why it matters.
 {{{end if}}}
-{{{if [[[FOCUS_AREAS]]] contains "applications"}}}
+{{{if FOCUS_AREAS contains "applications"}}}
 3. Real-world applications of [[[SUBJECT]]].
 {{{end if}}}
-{{{if [[[FOCUS_AREAS]]] contains "common_pitfalls"}}}
+{{{if FOCUS_AREAS contains "common_pitfalls"}}}
 4. Common pitfalls and misconceptions to avoid.
 {{{end if}}}
-{{{if [[[FOCUS_AREAS]]] contains "further_reading"}}}
+{{{if FOCUS_AREAS contains "further_reading"}}}
 5. Suggestions for further reading, ordered from introductory to advanced.
 {{{end if}}}
 
