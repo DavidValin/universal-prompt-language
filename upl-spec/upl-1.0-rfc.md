@@ -465,7 +465,7 @@ Rules:
 - A parameter hidden by its condition still receives its `def` default value
   for rendering — it is simply not prompted for interactively and cannot be
   overridden via JSON.
-- The condition expression is parsed and validated at parse time (§9.5).
+- The condition expression is parsed and validated at parse time (§9 step 5a).
 
 ---
 
@@ -1135,7 +1135,7 @@ A conforming UPL implementation MUST perform the following steps:
    (an unknown field is a parse error). A root variable that is not declared in
    `params` is **not** a parse error: its value may be supplied
    programmatically at render time (see the `[[[URL]]]` example in §3.5), and
-   existence of a *value* is enforced at render time (step 7) as `MissingValue`.
+   existence of a *value* is enforced at render time (step 6) as `MissingValue`.
  5a. **Validate conditions** — for each top-level parameter that declares an
     `exclude_condition` (§3.7), verify that the condition expression is syntactically
     valid (parsed with the §5 condition syntax), that every variable reference
@@ -1188,7 +1188,7 @@ An implementation conforms to this standard if it:
 - Applies the operator precedence in §5.1.
 - Reports `for`/`if` block imbalance as parse errors (§4.5).
 - Supports the `exclude_condition` field on top-level parameters (§3.7): parses and
-  validates condition expressions at parse time (§9.5a), evaluates them at
+   validates condition expressions at parse time (§9 step 5a), evaluates them at
   build time to hide (exclude) parameters whose condition is truthy, and
   rejects non-null values for hidden parameters supplied via JSON.
 - Reports errors as described in §9.

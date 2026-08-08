@@ -870,6 +870,108 @@ params:
     assert!(vd.exclude_condition.is_some());
 }
 
+// --- List `etype` validation (RFC §3.1 / §3.3) ---
+
+#[test]
+fn test_list_without_etype_is_error() {
+    // RFC §3.1: `list` requires `etype`.
+    let content = r#"--
+name: p
+params:
+  items:
+    type: list
+    def: ["a", "b"]
+--
+[[[ITEMS]]]
+"#;
+    let res = PromptParser::parse(content);
+    assert!(
+        matches!(res, Err(PromptParseError::MissingElementType { .. })),
+        "list without etype should be error: {:?}",
+        res
+    );
+}
+
+#[test]
+fn test_list_with_invalid_etype_list_is_error() {
+    // RFC §3.3: `list` is not a valid list etype.
+    let content = r#"--
+name: p
+params:
+  items:
+    type: list
+    etype: list
+--
+[[[ITEMS]]]
+"#;
+    let res = PromptParser::parse(content);
+    assert!(
+        matches!(res, Err(PromptParseError::InvalidListEtype { .. })),
+        "etype: list on a list should be error: {:?}",
+        res
+    );
+}
+
+#[test]
+fn test_list_with_invalid_etype_option_single_is_error() {
+    // RFC §3.3: `option_single` is not a valid list etype.
+    let content = r#"--
+name: p
+params:
+  items:
+    type: list
+    etype: option_single
+--
+[[[ITEMS]]]
+"#;
+    let res = PromptParser::parse(content);
+    assert!(
+        matches!(res, Err(PromptParseError::InvalidListEtype { .. })),
+        "etype: option_single on a list should be error: {:?}",
+        res
+    );
+}
+
+#[test]
+fn test_list_with_invalid_etype_object_shape_literal_is_error() {
+    // RFC §3.3: `object_shape` (the literal type name) is not a valid list
+    // etype — one must use `etype: <object_shape_name>` (a reference).
+    let content = r#"--
+name: p
+params:
+  items:
+    type: list
+    etype: object_shape
+--
+[[[ITEMS]]]
+"#;
+    let res = PromptParser::parse(content);
+    assert!(
+        matches!(res, Err(PromptParseError::InvalidListEtype { .. })),
+        "etype: object_shape (literal) on a list should be error: {:?}",
+        res
+    );
+}
+
+#[test]
+fn test_list_with_boolean_etype_is_ok() {
+    // RFC §3.3: `boolean` IS a valid list etype.
+    let content = r#"--
+name: p
+params:
+  flags:
+    type: list
+    etype: boolean
+    def: [true, false, true]
+--
+[[[FLAGS]]]
+"#;
+    let prompt = PromptParser::parse(content).expect("should parse");
+    let flags = prompt.variable_definitions.get("flags").unwrap();
+    assert_eq!(flags.element_type, Some(VariableType::Boolean));
+}
+
+
 #[test]
 fn test_condition_not_operator_parses() {
     let content = r#"--

@@ -191,6 +191,8 @@ pub enum PromptParseError {
     MissingOpts(String),
     #[error("Invalid etype '{etype}' for option type '{kind}': allowed etypes are string, long_string, number, object (inline), or a referenced object_shape")]
     InvalidOptionEtype { etype: String, kind: String },
+    #[error("Invalid etype '{etype}' for list type: allowed etypes are string, long_string, number, boolean, object (inline), or a referenced object_shape")]
+    InvalidListEtype { etype: String },
     #[error("Option entry #{index} does not match etype '{etype}': {value}")]
     OptionEntryTypeMismatch { index: usize, etype: String, value: String },
     #[error("Option 'label' is only allowed for 'option_single' and 'option_multi' with an object_shape etype")]
@@ -269,7 +271,7 @@ struct ParseContext {
     errors: Vec<PromptParseError>,
 }
 
-// --- Body reference validation helpers (RFC §9 step 4) ---
+// --- Body reference validation helpers (RFC §9 step 5) ---
 //
 // `Shape` is the resolved form a binding exposes to dotted-path traversal. It
 // holds references into the stable `variable_definitions` maps (owned by the
@@ -448,7 +450,7 @@ impl PromptParser {
         // Validate that every variable reference in the body resolves to a
         // declared variable (or an in-scope loop variable) and that every
         // dotted-path segment names a real field of the referenced object's
-        // resolved shape (RFC §9 step 4).
+        // resolved shape (RFC §9 step 5).
         Self::validate_body_references(&template, &var_defs)?;
 
         // Finalize prompt
@@ -560,7 +562,7 @@ impl PromptParser {
         // `element_type`/`ofields_definitions`.
         Self::validate_all_definitions(&var_defs, &defaults)?;
 
-        // Validate condition expressions (RFC §9.5): syntax already parsed
+        // Validate condition expressions (RFC §9 step 5a): syntax already parsed
         // during `parse_definitions_block`; here we validate ordering (a
         // condition may only reference parameters declared before it),
         // reject conditions on `object_shape`, and reject lowercase
@@ -1084,6 +1086,38 @@ impl PromptParser {
             });
         }
 
+        // `list` requires an `etype` (RFC §3.1). `option_multi` also requires
+        // one; `option_single` defaults to `string` when omitted.
+        if def.element_type.is_none() && def.element_ref.is_none() {
+            match def.r#type {
+                List => {
+                    return Err(PromptParseError::MissingElementType {
+                        type_name: "list".into(),
+                    });
+                }
+                OptionMulti => {
+                    return Err(PromptParseError::MissingElementType {
+                        type_name: "option_multi".into(),
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        // Restrict allowed list etypes (RFC §3.3): `string`, `long_string`,
+        // `number`, `boolean`, the inline `object`, or a referenced
+        // `object_shape`. `list`, `option_single`, `option_multi`, and
+        // `object_shape` (the literal type name) are not valid list etypes.
+        if def.r#type == List {
+            if let Some(et) = def.element_type {
+                if !matches!(et, String | LongString | Number | Boolean | Object) {
+                    return Err(PromptParseError::InvalidListEtype {
+                        etype: format!("{:?}", et),
+                    });
+                }
+            }
+        }
+
         // Type-check the `def` value (RFC §3.3): a `def` whose `VariableValue`
         // kind does not match the declared `type`/`element_type` is a parse
         // error. Object/list `def`s are checked recursively against the
@@ -1110,18 +1144,12 @@ impl PromptParser {
                 return Err(PromptParseError::MissingOpts(format!("{:?}", def.r#type).to_lowercase()));
             }
 
-            // option_single etype defaults to string; option_multi requires it.
-            // `element_ref` is set when etype names a declared object; after
-            // resolution `element_type` is `Object` and `ofields_definitions`
-            // holds the resolved shape, so either signal counts as "present".
+            // option_single etype defaults to string; option_multi requires it
+            // (enforced above). `element_ref` is set when etype names a
+            // declared object; after resolution `element_type` is `Object` and
+            // `ofields_definitions` holds the resolved shape, so either signal
+            // counts as "present".
             let has_etype = def.element_type.is_some() || def.element_ref.is_some();
-            if !has_etype {
-                if let OptionMulti = def.r#type {
-                    return Err(PromptParseError::MissingElementType {
-                        type_name: "option_multi".into(),
-                    });
-                }
-            }
             let etype = if has_etype {
                 def.element_type
             } else {
@@ -1243,7 +1271,7 @@ impl PromptParser {
         Ok(())
     }
 
-    /// Validate condition expressions on top-level parameters (RFC §9.5).
+    /// Validate condition expressions on top-level parameters (RFC §9 step 5a).
     ///
     /// For each parameter that declares a `condition`:
     /// - Reject conditions on `object_shape` variables (they are never asked).
@@ -1538,7 +1566,7 @@ if let Some(label) = &def.label {
     }
 
     // -----------------------------------------------------------------
-    // Body reference validation (RFC §9 step 4)
+    // Body reference validation (RFC §9 step 5)
     // -----------------------------------------------------------------
     //
     // Every variable reference in the body (placeholders, loop list
@@ -2417,7 +2445,7 @@ fn parse_condition(src: &str) -> Result<CondExpr, PromptParseError> {
 }
 
 /// Collect all variable names referenced in a condition expression AST.
-/// Used by `validate_conditions` to enforce the ordering rule (RFC §9.5):
+/// Used by `validate_conditions` to enforce the ordering rule (RFC §9 step 5a):
 /// a condition may only reference parameters declared *before* the one
 /// carrying the condition.
 fn collect_cond_var_names(cond: &CondExpr) -> Vec<String> {

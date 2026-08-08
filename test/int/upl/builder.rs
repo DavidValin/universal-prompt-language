@@ -1,15 +1,46 @@
-// Integration tests for the PromptBuilder render engine.
+// Tests for the prompt builder: pure rendering, integration rendering, and
+// build_from_json.
 //
-// These tests feed real UPL documents through `PromptParser` (exercising the
-// declared variable definitions) and then render them with `PromptBuilder`,
-// supplying a pre-built ValueMap. They cover the constructs defined in
-// upl-spec/upl-1.0-rfc.md §4: placeholders, ternaries, for-loops and if-blocks, plus
-// the operators in §5.
+// These exercise `PromptBuilder::render` and `PromptBuilder::build_from_json`
+// over pre-parsed templates and full UPL documents. They cover the constructs
+// defined in upl-spec/upl-1.0-rfc.md §4: placeholders, ternaries, for-loops
+// and if-blocks, plus the operators in §5.
 
-use universal_prompt_language::upl::builder::{PromptBuilder, ValueMap};
-use universal_prompt_language::upl::parser::{ObjectMap, PromptParser, PromptParseError, VariableValue};
+use std::collections::HashMap;
 
-fn parse(upl: &str) -> universal_prompt_language::upl::parser::Prompt {
+use universal_prompt_language::upl::builder::{BuilderError, PromptBuilder, ValueMap};
+use universal_prompt_language::upl::parser::{
+    ObjectMap, Prompt, PromptParseError, PromptParser, Template, VariableDefinitions,
+    VariableValue,
+};
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+fn prompt_with(body: &str) -> Prompt {
+    let template = Template::parse(body).expect("template body should parse");
+    Prompt {
+        name: String::new(),
+        title: None,
+        desc: None,
+        source: None,
+        prompt: body.to_string(),
+        template,
+        variable_definitions: VariableDefinitions::new(),
+        variable_defaults: HashMap::new(),
+    }
+}
+
+fn render_str(body: &str, values: &[(&str, VariableValue)]) -> String {
+    let map: ValueMap = values
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.clone()))
+        .collect();
+    PromptBuilder::new(prompt_with(body)).render(&map).unwrap()
+}
+
+fn parse(upl: &str) -> Prompt {
     PromptParser::parse(upl).expect("UPL should parse")
 }
 
@@ -27,6 +58,286 @@ fn vmap(pairs: &[(&str, VariableValue)]) -> ValueMap {
         .collect()
 }
 
+fn build(upl: &str, json: &str) -> Result<String, BuilderError> {
+    let prompt = parse(upl);
+    PromptBuilder::new(prompt).build_from_json(json)
+}
+
+// ---------------------------------------------------------------------------
+// Pure rendering unit tests (originally in builder.rs)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_simple_placeholder() {
+    let out = render_str("Hello, [[[NAME]]]!", &[("name", VariableValue::String("Alice".into()))]);
+    assert_eq!(out, "Hello, Alice!");
+}
+
+#[test]
+fn test_case_insensitive_placeholder() {
+    // Placeholders MUST be uppercase (§4.1); lookup against the declared
+    // (lowercase/mixed-case) variable name is case-insensitive.
+    let out = render_str("[[[USERNAME]]] vs [[[USERNAME]]]", &[("Username", VariableValue::String("bob".into()))]);
+    assert_eq!(out, "bob vs bob");
+}
+
+#[test]
+fn test_number_and_boolean_placeholders() {
+    let out = render_str(
+        "size=[[[SIZE]]], flag=[[[FLAG]]]",
+        &[
+            ("size", VariableValue::Number(42.0)),
+            ("flag", VariableValue::Boolean(true)),
+        ],
+    );
+    assert_eq!(out, "size=42, flag=true");
+}
+
+#[test]
+fn test_nested_object_placeholder() {
+    let mut obj = ObjectMap::new();
+    let mut auth = ObjectMap::new();
+    auth.insert("type".into(), VariableValue::String("bearer".into()));
+    auth.insert("token".into(), VariableValue::String("sekret".into()));
+    obj.insert("base_url".into(), VariableValue::String("https://api.example.com".into()));
+    obj.insert("auth".into(), VariableValue::Object(auth));
+    let out = render_str(
+        "url=[[[API_CONFIG.BASE_URL]]] auth=[[[API_CONFIG.AUTH.TYPE]]]",
+        &[("api_config", VariableValue::Object(obj))],
+    );
+    assert_eq!(out, "url=https://api.example.com auth=bearer");
+}
+
+#[test]
+fn test_ternary_true_branch() {
+    let out = render_str(
+        "{{{AGE >= 18 ? \"adult\" : \"minor\"}}}",
+        &[("age", VariableValue::Number(21.0))],
+    );
+    assert_eq!(out, "adult");
+}
+
+#[test]
+fn test_ternary_false_branch() {
+    let out = render_str(
+        "{{{AGE >= 18 ? \"adult\" : \"minor\"}}}",
+        &[("age", VariableValue::Number(12.0))],
+    );
+    assert_eq!(out, "minor");
+}
+
+#[test]
+fn test_ternary_bare_bool_cond() {
+    let out = render_str(
+        "{{{USE_ASYNC ? \"async\" : \"sync\"}}}",
+        &[("use_async", VariableValue::Boolean(false))],
+    );
+    assert_eq!(out, "sync");
+}
+
+#[test]
+fn test_if_block_truthy() {
+    let out = render_str(
+        "start\n{{{if INCLUDE_AUTH}}}\nAuth required\n{{{end if}}}\nend",
+        &[("include_auth", VariableValue::Boolean(true))],
+    );
+    assert_eq!(out, "start\nAuth required\nend");
+}
+
+#[test]
+fn test_if_block_falsy() {
+    let out = render_str(
+        "start\n{{{if INCLUDE_AUTH}}}\nAuth required\n{{{end if}}}\nend",
+        &[("include_auth", VariableValue::Boolean(false))],
+    );
+    assert_eq!(out, "start\nend");
+}
+
+#[test]
+fn test_if_block_with_comparison() {
+    let body = "{{{if BODY != \"{}\"}}}has body{{{end if}}}";
+    let with_body = render_str(body, &[("body", VariableValue::String("{\"x\":1}".into()))]);
+    assert_eq!(with_body, "has body");
+    let empty = render_str(body, &[("body", VariableValue::String("{}".into()))]);
+    assert_eq!(empty, "");
+}
+
+#[test]
+fn test_for_loop_over_strings() {
+    let body = "{{{for ITEM in ITEMS}}}- [[[ITEM]]]\n{{{end for}}}";
+    let out = render_str(
+        body,
+        &[(
+            "items",
+            VariableValue::List(vec![
+                VariableValue::String("a".into()),
+                VariableValue::String("b".into()),
+                VariableValue::String("c".into()),
+            ]),
+        )],
+    );
+    assert_eq!(out, "- a\n- b\n- c\n");
+}
+
+#[test]
+fn test_for_loop_over_objects() {
+    let body = "{{{for ENDPOINT in ENDPOINTS}}}- [[[ENDPOINT.METHOD]]] [[[ENDPOINT.PATH]]]\n{{{end for}}}";
+    let mut e1 = ObjectMap::new();
+    e1.insert("method".into(), VariableValue::String("GET".into()));
+    e1.insert("path".into(), VariableValue::String("/users".into()));
+    let mut e2 = ObjectMap::new();
+    e2.insert("method".into(), VariableValue::String("POST".into()));
+    e2.insert("path".into(), VariableValue::String("/users".into()));
+    let out = render_str(
+        body,
+        &[(
+            "endpoints",
+            VariableValue::List(vec![
+                VariableValue::Object(e1),
+                VariableValue::Object(e2),
+            ]),
+        )],
+    );
+    assert_eq!(out, "- GET /users\n- POST /users\n");
+}
+
+#[test]
+fn test_loop_with_nested_if() {
+    let body = "{{{for ENDPOINT in ENDPOINTS}}}- [[[ENDPOINT.PATH]]]\n{{{if ENDPOINT.BODY != \"{}\"}}}\n  has body\n{{{end if}}}{{{end for}}}";
+    let mut e1 = ObjectMap::new();
+    e1.insert("path".into(), VariableValue::String("/a".into()));
+    e1.insert("body".into(), VariableValue::String("{}".into()));
+    let mut e2 = ObjectMap::new();
+    e2.insert("path".into(), VariableValue::String("/b".into()));
+    e2.insert("body".into(), VariableValue::String("{\"x\":1}".into()));
+    let out = render_str(
+        body,
+        &[(
+            "endpoints",
+            VariableValue::List(vec![
+                VariableValue::Object(e1),
+                VariableValue::Object(e2),
+            ]),
+        )],
+    );
+    assert_eq!(out, "- /a\n- /b\n  has body\n");
+}
+
+#[test]
+fn test_not_operator() {
+    let body = "{{{if !FLAG}}}off{{{end if}}}";
+    let off = render_str(body, &[("flag", VariableValue::Boolean(false))]);
+    assert_eq!(off, "off");
+    let on = render_str(body, &[("flag", VariableValue::Boolean(true))]);
+    assert_eq!(on, "");
+}
+
+#[test]
+fn test_string_operators() {
+    assert_eq!(
+        render_str("{{{TEXT contains \"hello\" ? \"yes\" : \"no\"}}}", &[("text", VariableValue::String("say hello world".into()))]),
+        "yes"
+    );
+    assert_eq!(
+        render_str("{{{PATH starts_with \"/home\" ? \"yes\" : \"no\"}}}", &[("path", VariableValue::String("/home/me".into()))]),
+        "yes"
+    );
+    assert_eq!(
+        render_str("{{{EXT ends_with \".js\" ? \"yes\" : \"no\"}}}", &[("ext", VariableValue::String("app.ts".into()))]),
+        "no"
+    );
+}
+
+#[test]
+fn test_equality_operators() {
+    assert_eq!(
+        render_str("{{{A = B ? \"eq\" : \"ne\"}}}", &[
+            ("a", VariableValue::Number(5.0)),
+            ("b", VariableValue::Number(5.0)),
+        ]),
+        "eq"
+    );
+    assert_eq!(
+        render_str("{{{A = B ? \"eq\" : \"ne\"}}}", &[
+            ("a", VariableValue::String("x".into())),
+            ("b", VariableValue::String("y".into())),
+        ]),
+        "ne"
+    );
+}
+
+#[test]
+fn test_comparison_operators() {
+    assert_eq!(
+        render_str("{{{N > 10 ? \"big\" : \"small\"}}}", &[("n", VariableValue::Number(3.0))]),
+        "small"
+    );
+    assert_eq!(
+        render_str("{{{N <= 10 ? \"ok\" : \"no\"}}}", &[("n", VariableValue::Number(10.0))]),
+        "ok"
+    );
+}
+
+#[test]
+fn test_operator_precedence_not_vs_comparison() {
+    // a = b contains c  =>  (a = b) contains c  (since `=` binds tighter
+    // than `contains` per §5.1). a="x", b="x" => (a=b) => Boolean(true);
+    // Boolean contains "x" => type error.
+    let body = "{{{A = B contains \"x\" ? \"yes\" : \"no\"}}}";
+    // a="x", b="x" => (a=b) => true (Boolean) => Boolean contains "x" => type error
+    let mut m: ValueMap = HashMap::new();
+    m.insert("a".to_string(), VariableValue::String("x".into()));
+    m.insert("b".to_string(), VariableValue::String("x".into()));
+    let res = PromptBuilder::new(prompt_with(body)).render(&m);
+    assert!(res.is_err());
+}
+
+#[test]
+fn test_safety_unmatched_braces_emitted_verbatim() {
+    // A lone }}} with no preceding {{{ should pass through untouched.
+    let out = render_str("code: foo}}}bar", &[]);
+    assert_eq!(out, "code: foo}}}bar");
+}
+
+#[test]
+fn test_rest_client_example() {
+    let body = r#"Please write a Node.js client that calls the following endpoints using fetch:
+
+{{{for ENDPOINT in ENDPOINTS}}}
+- [[[ENDPOINT.METHOD]]] [[[ENDPOINT.PATH]]] (body: [[[ENDPOINT.BODY]]])
+{{{if INCLUDE_AUTH}}}
+  Note: this endpoint must send an Authorization header.
+{{{end if}}}
+{{{if ENDPOINT.BODY != "{}"}}}
+  Note: this endpoint expects a request body.
+{{{end if}}}
+{{{end for}}}
+
+Explain how the client should handle errors and retries for each call.
+"#;
+    let mut e1 = ObjectMap::new();
+    e1.insert("method".into(), VariableValue::String("GET".into()));
+    e1.insert("path".into(), VariableValue::String("/users".into()));
+    e1.insert("body".into(), VariableValue::String("{}".into()));
+    let mut e2 = ObjectMap::new();
+    e2.insert("method".into(), VariableValue::String("POST".into()));
+    e2.insert("path".into(), VariableValue::String("/orders".into()));
+    e2.insert("body".into(), VariableValue::String("{\"item\":\"x\"}".into()));
+    let out = render_str(body, &[
+        ("endpoints", VariableValue::List(vec![VariableValue::Object(e1), VariableValue::Object(e2)])),
+        ("include_auth", VariableValue::Boolean(true)),
+    ]);
+    assert!(out.contains("- GET /users (body: {})"));
+    assert!(out.contains("- POST /orders (body: {\"item\":\"x\"})"));
+    // Auth note appears for both endpoints (include_auth is true).
+    assert_eq!(out.matches("must send an Authorization header").count(), 2);
+    // "expects a request body" only for the POST endpoint (body != "{}").
+    assert_eq!(out.matches("expects a request body").count(), 1);
+    assert!(out.contains("Note: this endpoint expects a request body."));
+}
+
+// ---------------------------------------------------------------------------
+// Integration rendering tests (originally in builder_render.rs)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -1563,3 +1874,1096 @@ A=[[[A]]] B=[[[B]]] C=[[[C]]]
 }
 
 
+
+// ---------------------------------------------------------------------------
+// build_from_json integration tests (originally in build_from_json.rs)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn json_basic_string_placeholder() {
+    let upl = "\
+--
+name: hello
+title: Hello
+params:
+  name:
+    type: string
+    def: \"guest\"
+--
+Hello, [[[NAME]]]!
+--
+";
+    let out = build(upl, r#"{"name": "Ada"}"#).unwrap();
+    assert_eq!(out, "Hello, Ada!\n");
+}
+
+#[test]
+fn json_all_types_at_once() {
+    let upl = "\
+--
+name: p
+params:
+  s:
+    type: string
+    def: \"default_s\"
+  ls:
+    type: long_string
+    def: \"default_ls\"
+  n:
+    type: number
+    def: 0
+  b:
+    type: boolean
+    def: false
+  os:
+    type: option_single
+    opts:
+      - \"x\"
+      - \"y\"
+    def: \"x\"
+  om:
+    type: option_multi
+    etype: string
+    opts:
+      - \"a\"
+      - \"b\"
+    def: [\"a\"]
+--
+s=[[[S]]] ls=[[[LS]]] n=[[[N]]] b={{{B ? \"T\" : \"F\"}}}
+os=[[[OS]]] om=[[[OM]]]
+--
+";
+    let json = r#"{
+        "s": "hello",
+        "ls": "multi\nline",
+        "n": 42,
+        "b": true,
+        "os": "y",
+        "om": ["a", "b"]
+    }"#;
+    let out = build(upl, json).unwrap();
+    assert!(out.contains("s=hello"));
+    assert!(out.contains("ls=multi"));
+    assert!(out.contains("n=42"));
+    assert!(out.contains("b=T"));
+    assert!(out.contains("os=y"));
+    assert!(out.contains("om=a, b"));
+}
+
+#[test]
+fn json_ternary_and_if() {
+    let upl = "\
+--
+name: p
+params:
+  file_size:
+    type: number
+    def: 100
+  use_async:
+    type: boolean
+    def: true
+--
+Size: [[[FILE_SIZE]]]
+{{{FILE_SIZE > 100 ? \"large\" : \"small\"}}}
+{{{if USE_ASYNC}}}async mode{{{end if}}}
+--
+";
+    let json = r#"{"file_size": 250, "use_async": false}"#;
+    let out = build(upl, json).unwrap();
+    assert!(out.contains("Size: 250"));
+    assert!(out.contains("large"));
+    assert!(!out.contains("async mode"));
+}
+
+#[test]
+fn json_nested_object() {
+    let upl = "\
+--
+name: p
+params:
+  cfg:
+    type: object
+    ofields:
+      host:
+        type: string
+        def: \"localhost\"
+      port:
+        type: number
+        def: 8080
+--
+host=[[[CFG.HOST]]] port=[[[CFG.PORT]]]
+--
+";
+    let json = r#"{"cfg": {"host": "db.local", "port": 5432}}"#;
+    let out = build(upl, json).unwrap();
+    assert_eq!(out, "host=db.local port=5432\n");
+}
+
+#[test]
+fn json_nested_object_partial_defaults() {
+    let upl = "\
+--
+name: p
+params:
+  cfg:
+    type: object
+    ofields:
+      host:
+        type: string
+        def: \"localhost\"
+      port:
+        type: number
+        def: 8080
+--
+host=[[[CFG.HOST]]] port=[[[CFG.PORT]]]
+--
+";
+    let json = r#"{"cfg": {"port": 3000}}"#;
+    let out = build(upl, json).unwrap();
+    assert_eq!(out, "host=localhost port=3000\n");
+}
+
+#[test]
+fn json_list_of_strings_loop() {
+    let upl = "\
+--
+name: p
+params:
+  items:
+    type: list
+    etype: string
+    def: []
+--
+{{{for I in ITEMS}}}- [[[I]]]
+{{{end for}}}
+--
+";
+    let json = r#"{"items": ["alpha", "beta", "gamma"]}"#;
+    let out = build(upl, json).unwrap();
+    assert_eq!(out, "- alpha\n- beta\n- gamma\n");
+}
+
+#[test]
+fn json_list_of_objects_with_object_shape() {
+    let upl = "\
+--
+name: p
+params:
+  server:
+    type: object_shape
+    ofields:
+      host:
+        type: string
+      port:
+        type: number
+  servers:
+    type: list
+    etype: server
+    def: []
+--
+{{{for S in SERVERS}}}- [[[S.HOST]]]:[[[S.PORT]]]
+{{{end for}}}
+--
+";
+    let json = r#"{"servers": [
+        {"host": "a.local", "port": 80},
+        {"host": "b.local", "port": 443}
+    ]}"#;
+    let out = build(upl, json).unwrap();
+    assert_eq!(out, "- a.local:80\n- b.local:443\n");
+}
+
+#[test]
+fn json_list_of_objects_partial_field_defaults() {
+    // A list element object missing a field: the missing field falls back to
+    // a type-appropriate zero (matching interactive collection behaviour).
+    let upl = "\
+--
+name: p
+params:
+  server:
+    type: object_shape
+    ofields:
+      host:
+        type: string
+      port:
+        type: number
+  servers:
+    type: list
+    etype: server
+    def: []
+--
+{{{for S in SERVERS}}}- [[[S.HOST]]]:[[[S.PORT]]]
+{{{end for}}}
+--
+";
+    let json = r#"{"servers": [{"host": "only-host"}]}"#;
+    let out = build(upl, json).unwrap();
+    // port falls back to 0 (number zero, since no def declared for server.port)
+    assert_eq!(out, "- only-host:0\n");
+}
+
+#[test]
+fn json_option_single_number() {
+    let upl = "\
+--
+name: p
+params:
+  port:
+    type: option_single
+    etype: number
+    opts:
+      - 80
+      - 443
+      - 8080
+    def: 443
+--
+port=[[[PORT]]]
+--
+";
+    let json = r#"{"port": 80}"#;
+    let out = build(upl, json).unwrap();
+    assert_eq!(out, "port=80\n");
+}
+
+#[test]
+fn json_option_single_object_etype() {
+    let upl = "\
+--
+name: p
+params:
+  feature:
+    type: object_shape
+    ofields:
+      name:
+        type: string
+      enabled:
+        type: boolean
+  pick:
+    type: option_single
+    etype: feature
+    label: name
+    opts:
+      - { name: \"auth\", enabled: true }
+      - { name: \"logs\", enabled: false }
+    def: { name: \"auth\", enabled: true }
+--
+picked: [[[PICK.NAME]]] enabled={{{PICK.ENABLED ? \"yes\" : \"no\"}}}
+--
+";
+    let json = r#"{"pick": {"name": "logs", "enabled": false}}"#;
+    let out = build(upl, json).unwrap();
+    assert_eq!(out, "picked: logs enabled=no\n");
+}
+
+#[test]
+fn json_option_multi_object_etype_loop() {
+    let upl = "\
+--
+name: p
+params:
+  feature:
+    type: object_shape
+    ofields:
+      name:
+        type: string
+  selected:
+    type: option_multi
+    etype: feature
+    label: name
+    opts:
+      - { name: \"auth\" }
+      - { name: \"logs\" }
+      - { name: \"metrics\" }
+    def: []
+--
+{{{for F in SELECTED}}}- [[[F.NAME]]]
+{{{end for}}}
+--
+";
+    let json = r#"{"selected": [{"name": "auth"}, {"name": "metrics"}]}"#;
+    let out = build(upl, json).unwrap();
+    assert_eq!(out, "- auth\n- metrics\n");
+}
+
+#[test]
+fn json_empty_object_all_defaults() {
+    let upl = "\
+--
+name: p
+params:
+  name:
+    type: string
+    def: \"world\"
+  n:
+    type: number
+    def: 7
+--
+Hi [[[NAME]]]! n=[[[N]]]
+--
+";
+    let out = build(upl, "{}").unwrap();
+    assert_eq!(out, "Hi world! n=7\n");
+}
+
+#[test]
+fn json_null_value_uses_default() {
+    let upl = "\
+--
+name: p
+params:
+  name:
+    type: string
+    def: \"fallback\"
+--
+Hi [[[NAME]]]
+--
+";
+    let out = build(upl, r#"{"name": null}"#).unwrap();
+    assert_eq!(out, "Hi fallback\n");
+}
+
+#[test]
+fn json_case_insensitive_keys() {
+    let upl = "\
+--
+name: p
+params:
+  name:
+    type: string
+    def: \"default\"
+--
+Hi [[[NAME]]]
+--
+";
+    let out = build(upl, r#"{"NAME": "Bob"}"#).unwrap();
+    assert_eq!(out, "Hi Bob\n");
+}
+
+#[test]
+fn json_error_wrong_type_for_number() {
+    let upl = "\
+--
+name: p
+params:
+  n:
+    type: number
+--
+n=[[[N]]]
+--
+";
+    let res = build(upl, r#"{"n": "not a number"}"#);
+    assert!(matches!(res, Err(BuilderError::Validation(_))));
+}
+
+#[test]
+fn json_error_unknown_parameter() {
+    let upl = "\
+--
+name: p
+params:
+  a:
+    type: string
+--
+x
+--
+";
+    let res = build(upl, r#"{"unknown_param": "x"}"#);
+    assert!(matches!(res, Err(BuilderError::Validation(_))));
+}
+
+#[test]
+fn json_error_object_shape_in_json() {
+    let upl = "\
+--
+name: p
+params:
+  shape:
+    type: object_shape
+    ofields:
+      x:
+        type: string
+  items:
+    type: list
+    etype: shape
+    def: []
+--
+x
+--
+";
+    let res = build(upl, r#"{"shape": {"x": "y"}}"#);
+    assert!(matches!(res, Err(BuilderError::Validation(_))));
+}
+
+#[test]
+fn json_error_option_single_invalid_value() {
+    let upl = "\
+--
+name: p
+params:
+  env:
+    type: option_single
+    opts:
+      - \"dev\"
+      - \"prod\"
+    def: \"dev\"
+--
+env=[[[ENV]]]
+--
+";
+    let res = build(upl, r#"{"env": "staging"}"#);
+    assert!(matches!(res, Err(BuilderError::Validation(_))));
+}
+
+#[test]
+fn json_error_option_multi_invalid_element() {
+    let upl = "\
+--
+name: p
+params:
+  tags:
+    type: option_multi
+    etype: string
+    opts:
+      - \"a\"
+      - \"b\"
+--
+tags: [[[TAGS]]]
+--
+";
+    let res = build(upl, r#"{"tags": ["a", "z"]}"#);
+    assert!(matches!(res, Err(BuilderError::Validation(_))));
+}
+
+#[test]
+fn json_error_invalid_json_syntax() {
+    let upl = "\
+--
+name: p
+params:
+  a:
+    type: string
+--
+x
+--
+";
+    let res = build(upl, "{broken json");
+    assert!(matches!(res, Err(BuilderError::Validation(_))));
+}
+
+#[test]
+fn json_error_non_object_root() {
+    let upl = "\
+--
+name: p
+params:
+  a:
+    type: string
+--
+x
+--
+";
+    let res = build(upl, "[1, 2, 3]");
+    assert!(matches!(res, Err(BuilderError::Validation(_))));
+}
+
+#[test]
+fn json_error_wrong_type_for_boolean() {
+    let upl = "\
+--
+name: p
+params:
+  flag:
+    type: boolean
+--
+{{{FLAG ? \"on\" : \"off\"}}}
+--
+";
+    let res = build(upl, r#"{"flag": "yes"}"#);
+    assert!(matches!(res, Err(BuilderError::Validation(_))));
+}
+
+#[test]
+fn json_error_array_for_object() {
+    let upl = "\
+--
+name: p
+params:
+  cfg:
+    type: object
+    ofields:
+      host:
+        type: string
+--
+host=[[[CFG.HOST]]]
+--
+";
+    let res = build(upl, r#"{"cfg": [1, 2]}"#);
+    assert!(matches!(res, Err(BuilderError::Validation(_))));
+}
+
+#[test]
+fn json_deeply_nested_object() {
+    let upl = "\
+--
+name: p
+params:
+  cfg:
+    type: object
+    ofields:
+      api:
+        type: object
+        ofields:
+          auth:
+            type: object
+            ofields:
+              type:
+                type: option_single
+                opts:
+                  - \"bearer\"
+                  - \"basic\"
+                def: \"bearer\"
+              token:
+                type: string
+                def: \"\"
+--
+auth.type=[[[CFG.API.AUTH.TYPE]]] token=[[[CFG.API.AUTH.TOKEN]]]
+--
+";
+    let json = r#"{"cfg": {"api": {"auth": {"type": "basic", "token": "xyz123"}}}}"#;
+    let out = build(upl, json).unwrap();
+    assert_eq!(out, "auth.type=basic token=xyz123\n");
+}
+
+#[test]
+fn json_deeply_nested_object_partial() {
+    let upl = "\
+--
+name: p
+params:
+  cfg:
+    type: object
+    ofields:
+      api:
+        type: object
+        ofields:
+          version:
+            type: string
+            def: \"v1\"
+          auth:
+            type: object
+            ofields:
+              type:
+                type: string
+                def: \"bearer\"
+              token:
+                type: string
+                def: \"default-token\"
+--
+v=[[[CFG.API.VERSION]]] auth.type=[[[CFG.API.AUTH.TYPE]]] token=[[[CFG.API.AUTH.TOKEN]]]
+--
+";
+    // Only provide api.auth.token; everything else uses defaults.
+    let json = r#"{"cfg": {"api": {"auth": {"token": "my-token"}}}}"#;
+    let out = build(upl, json).unwrap();
+    assert_eq!(out, "v=v1 auth.type=bearer token=my-token\n");
+}
+
+#[test]
+fn json_list_of_objects_with_nested_list() {
+    let upl = "\
+--
+name: p
+params:
+  resource:
+    type: object_shape
+    ofields:
+      name:
+        type: string
+      actions:
+        type: option_multi
+        etype: string
+        opts:
+          - \"GET\"
+          - \"POST\"
+          - \"PUT\"
+          - \"DELETE\"
+        def: []
+  resources:
+    type: list
+    etype: resource
+    def: []
+--
+{{{for R in RESOURCES}}}- [[[R.NAME]]] ([[[R.ACTIONS]]])
+{{{end for}}}
+--
+";
+    let json = r#"{"resources": [
+        {"name": "users", "actions": ["GET", "POST", "DELETE"]},
+        {"name": "posts", "actions": ["GET", "PUT"]}
+    ]}"#;
+    let out = build(upl, json).unwrap();
+    assert!(out.contains("- users (GET, POST, DELETE)"));
+    assert!(out.contains("- posts (GET, PUT)"));
+}
+
+#[test]
+fn json_object_with_nested_list_of_objects() {
+    let upl = "\
+--
+name: p
+params:
+  field:
+    type: object_shape
+    ofields:
+      name:
+        type: string
+      type:
+        type: string
+  model:
+    type: object
+    ofields:
+      fields:
+        type: list
+        etype: field
+        def: []
+--
+{{{for F in MODEL.FIELDS}}}- [[[F.NAME]]] : [[[F.TYPE]]]
+{{{end for}}}
+--
+";
+    let json = r#"{"model": {"fields": [
+        {"name": "id", "type": "string"},
+        {"name": "email", "type": "string"}
+    ]}}"#;
+    let out = build(upl, json).unwrap();
+    assert_eq!(out, "- id : string\n- email : string\n");
+}
+
+#[test]
+fn json_full_rest_api_prompt() {
+    // A trimmed version of the create_rest_api sample, exercising list of
+    // objects (with object_shape reuse), nested lists, option_multi, and
+    // option_single — all driven from JSON.
+    let upl = "\
+--
+name: p
+params:
+  language:
+    type: option_single
+    opts:
+      - \"ruby\"
+      - \"node.js\"
+    def: \"node.js\"
+  api_name:
+    type: string
+    def: \"My API\"
+  resources:
+    type: list
+    etype: resource
+    def: []
+  resource:
+    type: object_shape
+    ofields:
+      name:
+        type: string
+        def: \"users\"
+      actions:
+        type: option_multi
+        etype: string
+        opts:
+          - \"POST\"
+          - \"GET\"
+          - \"PUT\"
+          - \"PATCH\"
+          - \"DELETE\"
+        def: [\"POST\", \"GET\"]
+      fields:
+        type: list
+        etype: field
+        def: []
+  field:
+    type: object_shape
+    ofields:
+      name:
+        type: string
+        def: \"id\"
+      type:
+        type: option_single
+        opts:
+          - \"string\"
+          - \"number\"
+          - \"boolean\"
+        def: \"string\"
+      required:
+        type: boolean
+        def: false
+--
+API: [[[API_NAME]]] ([[[LANGUAGE]]])
+{{{for R in RESOURCES}}}
+- [[[R.NAME]]]: [[[R.ACTIONS]]]
+{{{for F in R.FIELDS}}}  - [[[F.NAME]]] (type: [[[F.TYPE]]], required: [[[F.REQUIRED]]])
+{{{end for}}}
+{{{end for}}}
+--
+";
+    let json = r#"{
+        "language": "ruby",
+        "api_name": "Blog API",
+        "resources": [
+            {
+                "name": "users",
+                "actions": ["GET", "POST", "DELETE"],
+                "fields": [
+                    {"name": "id", "type": "string", "required": true},
+                    {"name": "email", "type": "string", "required": true},
+                    {"name": "age", "type": "number", "required": false}
+                ]
+            },
+            {
+                "name": "posts",
+                "actions": ["GET", "POST"],
+                "fields": [
+                    {"name": "id", "type": "string", "required": true},
+                    {"name": "title", "type": "string", "required": true}
+                ]
+            }
+        ]
+    }"#;
+    let out = build(upl, json).unwrap();
+    assert!(out.contains("API: Blog API (ruby)"));
+    assert!(out.contains("- users: GET, POST, DELETE"));
+    assert!(out.contains("  - id (type: string, required: true)"));
+    assert!(out.contains("  - email (type: string, required: true)"));
+    assert!(out.contains("  - age (type: number, required: false)"));
+    assert!(out.contains("- posts: GET, POST"));
+    assert!(out.contains("  - title (type: string, required: true)"));
+}
+
+// --- Build-time `exclude_condition` field (RFC §3.7) ---
+//
+// condition truthy → parameter is hidden (excluded from build): skipped
+// during interactive collection, rejected if supplied via JSON.
+// condition falsy → parameter is shown (asked) normally.
+
+#[test]
+fn json_condition_hidden_param_absent_uses_default() {
+    // credit_card_type defaults to "visa"; condition `CREDIT_CARD_TYPE = "visa"`
+    // is truthy → expiry is hidden. Expiry absent from JSON → OK (uses default).
+    let upl = "\
+--
+name: p
+params:
+  credit_card_type:
+    type: option_single
+    opts:
+      - \"visa\"
+      - \"mastercard\"
+    def: \"visa\"
+  visa_card_expiry_date:
+    type: string
+    exclude_condition: CREDIT_CARD_TYPE = \"visa\"
+    def: \"12/25\"
+--
+Card: [[[CREDIT_CARD_TYPE]]] Expiry: [[[VISA_CARD_EXPIRY_DATE]]]
+--
+";
+    // JSON doesn't include the hidden param — should succeed.
+    let out = build(upl, r#"{"credit_card_type": "visa"}"#).unwrap();
+    assert!(out.contains("Card: visa"));
+    assert!(out.contains("Expiry: 12/25"));
+}
+
+#[test]
+fn json_condition_hidden_param_present_is_error() {
+    let upl = "\
+--
+name: p
+params:
+  credit_card_type:
+    type: option_single
+    opts:
+      - \"visa\"
+      - \"mastercard\"
+    def: \"visa\"
+  visa_card_expiry_date:
+    type: string
+    exclude_condition: CREDIT_CARD_TYPE = \"visa\"
+    def: \"12/25\"
+--
+Card: [[[CREDIT_CARD_TYPE]]] Expiry: [[[VISA_CARD_EXPIRY_DATE]]]
+--
+";
+    // JSON includes the hidden param with a non-null value — should error.
+    let res = build(upl, r#"{"credit_card_type": "visa", "visa_card_expiry_date": "99/99"}"#);
+    assert!(matches!(res, Err(BuilderError::Validation(_))));
+}
+
+#[test]
+fn json_condition_hidden_param_null_is_ok() {
+    let upl = "\
+--
+name: p
+params:
+  credit_card_type:
+    type: option_single
+    opts:
+      - \"visa\"
+      - \"mastercard\"
+    def: \"visa\"
+  visa_card_expiry_date:
+    type: string
+    exclude_condition: CREDIT_CARD_TYPE = \"visa\"
+    def: \"12/25\"
+--
+Card: [[[CREDIT_CARD_TYPE]]] Expiry: [[[VISA_CARD_EXPIRY_DATE]]]
+--
+";
+    // JSON includes the hidden param as null — should be OK (null = use default).
+    let out = build(upl, r#"{"credit_card_type": "visa", "visa_card_expiry_date": null}"#).unwrap();
+    assert!(out.contains("Expiry: 12/25"));
+}
+
+#[test]
+fn json_condition_falsy_param_shown_accepts_value() {
+    // credit_card_type is "mastercard"; condition `CREDIT_CARD_TYPE = "visa"`
+    // is falsy → expiry is shown. JSON provides a value → accepted.
+    let upl = "\
+--
+name: p
+params:
+  credit_card_type:
+    type: option_single
+    opts:
+      - \"visa\"
+      - \"mastercard\"
+    def: \"visa\"
+  visa_card_expiry_date:
+    type: string
+    exclude_condition: CREDIT_CARD_TYPE = \"visa\"
+    def: \"12/25\"
+--
+Card: [[[CREDIT_CARD_TYPE]]] Expiry: [[[VISA_CARD_EXPIRY_DATE]]]
+--
+";
+    let out = build(upl, r#"{"credit_card_type": "mastercard", "visa_card_expiry_date": "06/28"}"#).unwrap();
+    assert!(out.contains("Card: mastercard"));
+    assert!(out.contains("Expiry: 06/28"));
+}
+
+#[test]
+fn json_condition_falsy_param_absent_uses_default() {
+    let upl = "\
+--
+name: p
+params:
+  credit_card_type:
+    type: option_single
+    opts:
+      - \"visa\"
+      - \"mastercard\"
+    def: \"visa\"
+  visa_card_expiry_date:
+    type: string
+    exclude_condition: CREDIT_CARD_TYPE = \"visa\"
+    def: \"12/25\"
+--
+Card: [[[CREDIT_CARD_TYPE]]] Expiry: [[[VISA_CARD_EXPIRY_DATE]]]
+--
+";
+    let out = build(upl, r#"{"credit_card_type": "mastercard"}"#).unwrap();
+    assert!(out.contains("Card: mastercard"));
+    assert!(out.contains("Expiry: 12/25"));
+}
+
+#[test]
+fn json_condition_depends_on_json_value() {
+    // The condition is evaluated against JSON-supplied values, not just defaults.
+    // Default for credit_card_type is "visa" (condition truthy → hidden).
+    // But JSON overrides it to "mastercard" (condition falsy → shown).
+    let upl = "\
+--
+name: p
+params:
+  credit_card_type:
+    type: option_single
+    opts:
+      - \"visa\"
+      - \"mastercard\"
+    def: \"visa\"
+  visa_card_expiry_date:
+    type: string
+    exclude_condition: CREDIT_CARD_TYPE = \"visa\"
+    def: \"12/25\"
+--
+Card: [[[CREDIT_CARD_TYPE]]] Expiry: [[[VISA_CARD_EXPIRY_DATE]]]
+--
+";
+    // JSON sets credit_card_type to "mastercard" → condition is falsy →
+    // expiry is shown → providing a value is OK.
+    let out = build(upl, r#"{"credit_card_type": "mastercard", "visa_card_expiry_date": "06/28"}"#).unwrap();
+    assert!(out.contains("Card: mastercard"));
+    assert!(out.contains("Expiry: 06/28"));
+}
+
+#[test]
+fn json_condition_depends_on_json_value_hidden() {
+    // Default for credit_card_type is "visa" → condition is truthy → hidden.
+    // JSON sets credit_card_type to "visa" → condition still truthy →
+    // expiry is hidden → providing a value is an error.
+    let upl = "\
+--
+name: p
+params:
+  credit_card_type:
+    type: option_single
+    opts:
+      - \"visa\"
+      - \"mastercard\"
+    def: \"visa\"
+  visa_card_expiry_date:
+    type: string
+    exclude_condition: CREDIT_CARD_TYPE = \"visa\"
+    def: \"12/25\"
+--
+Card: [[[CREDIT_CARD_TYPE]]] Expiry: [[[VISA_CARD_EXPIRY_DATE]]]
+--
+";
+    let res = build(upl, r#"{"credit_card_type": "visa", "visa_card_expiry_date": "06/28"}"#);
+    assert!(matches!(res, Err(BuilderError::Validation(_))));
+}
+
+#[test]
+fn json_condition_with_number_comparison() {
+    let upl = "\
+--
+name: p
+params:
+  port:
+    type: number
+    def: 80
+  use_ssl:
+    type: boolean
+    exclude_condition: PORT = 443
+    def: false
+--
+Port: [[[PORT]]] SSL: [[[USE_SSL]]]
+--
+";
+    // Default port=80 → condition is falsy → use_ssl is shown.
+    // JSON sets port=443 → condition is truthy → use_ssl is hidden.
+    // Providing use_ssl when hidden → error.
+    let res = build(upl, r#"{"port": 443, "use_ssl": true}"#);
+    assert!(matches!(res, Err(BuilderError::Validation(_))));
+
+    // Not providing use_ssl when hidden → OK (uses default).
+    let out = build(upl, r#"{"port": 443}"#).unwrap();
+    assert!(out.contains("Port: 443"));
+    assert!(out.contains("SSL: false"));
+
+    // port=80 (default) → condition falsy → use_ssl shown → can provide value.
+    let out = build(upl, r#"{"port": 80, "use_ssl": true}"#).unwrap();
+    assert!(out.contains("Port: 80"));
+    assert!(out.contains("SSL: true"));
+}
+
+#[test]
+fn json_condition_no_condition_param_works_normally() {
+    let upl = "\
+--
+name: p
+params:
+  a:
+    type: string
+    def: \"x\"
+  b:
+    type: string
+    def: \"y\"
+--
+A=[[[A]]] B=[[[B]]]
+--
+";
+    let out = build(upl, r#"{"a": "1", "b": "2"}"#).unwrap();
+    assert_eq!(out, "A=1 B=2\n");
+}
+
+// ---------------------------------------------------------------------------
+// Method-call form operators (RFC §5) and list membership
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_method_call_contains() {
+    let out = render_str(
+        "{{{TEXT.contains(\"hello\") ? \"yes\" : \"no\"}}}",
+        &[("text", VariableValue::String("say hello world".into()))],
+    );
+    assert_eq!(out, "yes");
+}
+
+#[test]
+fn test_method_call_starts_with() {
+    let out = render_str(
+        "{{{PATH.starts_with(\"/home\") ? \"yes\" : \"no\"}}}",
+        &[("path", VariableValue::String("/home/me".into()))],
+    );
+    assert_eq!(out, "yes");
+}
+
+#[test]
+fn test_method_call_ends_with() {
+    let out = render_str(
+        "{{{EXT.ends_with(\".js\") ? \"yes\" : \"no\"}}}",
+        &[("ext", VariableValue::String("app.js".into()))],
+    );
+    assert_eq!(out, "yes");
+}
+
+#[test]
+fn test_contains_list_membership() {
+    // `contains` is overloaded: when one operand is a list, it tests
+    // membership (RFC §5).
+    let out = render_str(
+        "{{{TAGS contains \"api\" ? \"yes\" : \"no\"}}}",
+        &[("tags", VariableValue::List(vec![
+            VariableValue::String("api".into()),
+            VariableValue::String("v2".into()),
+        ]))],
+    );
+    assert_eq!(out, "yes");
+}
+
+#[test]
+fn test_contains_list_membership_not_found() {
+    let out = render_str(
+        "{{{TAGS contains \"xyz\" ? \"yes\" : \"no\"}}}",
+        &[("tags", VariableValue::List(vec![
+            VariableValue::String("api".into()),
+            VariableValue::String("v2".into()),
+        ]))],
+    );
+    assert_eq!(out, "no");
+}
+
+#[test]
+fn test_less_than_operator() {
+    assert_eq!(
+        render_str("{{{N < 10 ? \"small\" : \"big\"}}}", &[("n", VariableValue::Number(3.0))]),
+        "small"
+    );
+    assert_eq!(
+        render_str("{{{N < 10 ? \"small\" : \"big\"}}}", &[("n", VariableValue::Number(15.0))]),
+        "big"
+    );
+}
+
+#[test]
+fn test_negative_number_in_condition() {
+    assert_eq!(
+        render_str("{{{N < 0 ? \"negative\" : \"non-negative\"}}}", &[("n", VariableValue::Number(-5.0))]),
+        "negative"
+    );
+    assert_eq!(
+        render_str("{{{N < 0 ? \"negative\" : \"non-negative\"}}}", &[("n", VariableValue::Number(0.0))]),
+        "non-negative"
+    );
+}

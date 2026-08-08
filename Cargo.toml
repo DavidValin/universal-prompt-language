@@ -1,6 +1,6 @@
 [package]
 name = "universal-prompt-language"
-version = "0.1.0-rc.6"
+version = "0.1.0-rc.7"
 edition = "2021"
 keywords = ["prompts", "dynamic", "llm", "ai", "library"]
 
@@ -31,3 +31,15 @@ hex = "0.4"
 [[bin]]
 name = "upl"
 path = "src/main.rs"
+
+[[test]]
+name = "repository"
+path = "test/int/repository.rs"
+
+[[test]]
+name = "manager"
+path = "test/int/manager.rs"
+
+[[test]]
+name = "upl"
+path = "test/int/upl.rs"
