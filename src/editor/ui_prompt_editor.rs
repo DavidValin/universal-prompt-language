@@ -35,7 +35,10 @@ use std::path::{Path, PathBuf};
 
 use crossterm::{
     cursor,
-    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
+    event::{
+        self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind,
+        KeyModifiers,
+    },
     execute,
     queue,
     style::{
@@ -85,6 +88,34 @@ enum Block {
     If,
 }
 
+/// Accumulated side-effects from handling one or more events in a batch.
+///
+/// `dirty` marks that the parse state is stale and `recompute` should run.
+/// `wants_drain` marks that the last event was a text-mutation (typing /
+/// paste) and that further already-queued events should be coalesced into
+/// the same batch instead of rendered individually. `quit` marks that the
+/// user requested to leave the editor.
+#[derive(Default)]
+struct Batch {
+    dirty: bool,
+    wants_drain: bool,
+    quit: bool,
+}
+
+/// Mapping from visual rows to logical `(line, char_start, char_end)` segments.
+///
+/// Built from the current content lines and the content width. Each logical
+/// line of length `len` occupies `len / w + 1` visual rows (always at least
+/// one, and one extra row when `len` is an exact multiple of `w` so the
+/// end-of-line cursor has a cell). The last segment of a line may be shorter
+/// than `w`; an empty line yields a single `[0,0)` segment.
+struct WrapMap {
+    /// For each logical line index, the visual row where it begins.
+    line_vrow_start: Vec<usize>,
+    /// One entry per visual row: `(logical_line, char_start, char_end)`.
+    segments: Vec<(usize, usize, usize)>,
+}
+
 /// Each variable occupies three sidebar rows: the name (yellow), its type
 /// (white, no background), and a blank separator row.
 const ROWS_PER_VAR: usize = 3;
@@ -93,8 +124,7 @@ pub struct Editor {
     lines: Vec<Vec<char>>,
     row: usize,
     col: usize, // char index within the current line
-    top: usize,  // vertical scroll offset (line index)
-    left: usize, // horizontal scroll offset (char index)
+    top: usize, // vertical scroll offset (visual row index)
     cols: u16,
     rows: u16, // terminal height
     valid: bool,
@@ -134,7 +164,6 @@ pub fn run_editor_with_content(content: &str) -> Result<bool, EditorError> {
         row: 0,
         col: 0,
         top: 0,
-        left: 0,
         cols,
         rows,
         valid: false,
@@ -189,7 +218,7 @@ fn split_lines(content: &str) -> Vec<Vec<char>> {
 impl Editor {
     fn run(&mut self) -> Result<(), EditorError> {
         let mut stdout = io::stderr();
-        let _ = queue!(stdout, cursor::Show);
+        let _ = queue!(stdout, cursor::Show, EnableBracketedPaste);
 
         let res = (|| -> Result<(), EditorError> {
             loop {
@@ -200,71 +229,146 @@ impl Editor {
                 // Clear any transient message on the next event.
                 self.message.clear();
 
-                match ev {
-                    Event::Key(key) if key.kind == KeyEventKind::Press => {
-                        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-                        match key.code {
-                            KeyCode::Char('s') if ctrl => self.save()?,
-                            KeyCode::Char('r') if ctrl => {
-                                let mut out = io::stderr();
-                                show_rfc_popup(&mut out)?;
-                                let _ = queue!(out, cursor::Hide);
-                            }
-                            KeyCode::Char('c') if ctrl => return Ok(()),
-                            KeyCode::Esc => return Ok(()),
-                            KeyCode::Char(c) if !ctrl => {
-                                self.insert_char(c);
-                                self.recompute();
-                            }
-                            KeyCode::Tab => {
-                                self.insert_char(' ');
-                                self.insert_char(' ');
-                                self.recompute();
-                            }
-                            KeyCode::Enter => {
-                                self.newline();
-                                self.recompute();
-                            }
-                            KeyCode::Backspace => {
-                                self.backspace();
-                                self.recompute();
-                            }
-                            KeyCode::Delete => {
-                                self.delete();
-                                self.recompute();
-                            }
-                            KeyCode::Left => self.move_left(),
-                            KeyCode::Right => self.move_right(),
-                            KeyCode::Up => self.move_up(),
-                            KeyCode::Down => self.move_down(),
-                            KeyCode::Home => self.col = 0,
-                            KeyCode::End => {
-                                self.col = self.lines[self.row].len();
-                            }
-                            KeyCode::PageUp => {
-                                let h = self.current_edit_height();
-                                self.row = self.row.saturating_sub(h);
-                                self.clamp_row();
-                            }
-                            KeyCode::PageDown => {
-                                let h = self.current_edit_height();
-                                self.row = (self.row + h).min(self.lines.len() - 1);
-                            }
-                            _ => {}
-                        }
+                let mut batch = Batch::default();
+                self.handle_event(ev, &mut batch)?;
+                if batch.quit {
+                    return Ok(());
+                }
+
+                // Drain any further events that are already queued so that a
+                // burst of input (fast typing, a non-bracketed paste) is
+                // applied in a single pass with a single recompute instead of
+                // one recompute + render per character.
+                while batch.wants_drain
+                    && event::poll(std::time::Duration::from_millis(2))
+                        .map_err(|e| EditorError::Tui(e.to_string()))?
+                {
+                    let ev = event::read().map_err(|e| EditorError::Tui(e.to_string()))?;
+                    self.handle_event(ev, &mut batch)?;
+                    if batch.quit {
+                        return Ok(());
                     }
-                    Event::Resize(c, r) => {
-                        self.cols = c;
-                        self.rows = r;
-                    }
-                    _ => {}
+                }
+
+                if batch.dirty {
+                    self.recompute();
                 }
             }
         })();
 
-        let _ = queue!(stdout, cursor::Hide, Clear(ClearType::All));
+        let _ = queue!(stdout, cursor::Hide, Clear(ClearType::All), DisableBracketedPaste);
         stdout.flush().ok();
         res
+    }
+
+    /// Dispatch a single terminal event, mutating editor state in place.
+    ///
+    /// `batch` accumulates whether the editor's parse state is now dirty
+    /// (needs a `recompute`), whether more events should be drained, and
+    /// whether the user asked to quit. Splitting the dispatch out of the main
+    /// loop lets the loop batch consecutive input events into one recompute.
+    fn handle_event(&mut self, ev: Event, batch: &mut Batch) -> Result<(), EditorError> {
+        match ev {
+            Event::Key(key) if key.kind == KeyEventKind::Press => {
+                let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+                match key.code {
+                    KeyCode::Char('s') if ctrl => {
+                        self.save()?;
+                        batch.wants_drain = false;
+                    }
+                    KeyCode::Char('r') if ctrl => {
+                        let mut out = io::stderr();
+                        show_rfc_popup(&mut out)?;
+                        let _ = queue!(out, cursor::Hide);
+                        batch.wants_drain = false;
+                    }
+                    KeyCode::Char('c') if ctrl => batch.quit = true,
+                    KeyCode::Esc => batch.quit = true,
+                    KeyCode::Char(c) if !ctrl => {
+                        if c == '\n' || c == '\r' {
+                            self.newline();
+                        } else {
+                            self.insert_char(c);
+                        }
+                        batch.dirty = true;
+                        batch.wants_drain = true;
+                    }
+                    KeyCode::Tab => {
+                        self.insert_char(' ');
+                        self.insert_char(' ');
+                        batch.dirty = true;
+                        batch.wants_drain = true;
+                    }
+                    KeyCode::Enter => {
+                        self.newline();
+                        batch.dirty = true;
+                        batch.wants_drain = true;
+                    }
+                    KeyCode::Backspace => {
+                        self.backspace();
+                        batch.dirty = true;
+                        batch.wants_drain = true;
+                    }
+                    KeyCode::Delete => {
+                        self.delete();
+                        batch.dirty = true;
+                        batch.wants_drain = true;
+                    }
+                    KeyCode::Left => {
+                        self.move_left();
+                        batch.wants_drain = false;
+                    }
+                    KeyCode::Right => {
+                        self.move_right();
+                        batch.wants_drain = false;
+                    }
+                    KeyCode::Up => {
+                        self.move_up();
+                        batch.wants_drain = false;
+                    }
+                    KeyCode::Down => {
+                        self.move_down();
+                        batch.wants_drain = false;
+                    }
+                    KeyCode::Home => {
+                        self.col = 0;
+                        batch.wants_drain = false;
+                    }
+                    KeyCode::End => {
+                        self.col = self.lines[self.row].len();
+                        batch.wants_drain = false;
+                    }
+                    KeyCode::PageUp => {
+                        let h = self.current_edit_height();
+                        for _ in 0..h {
+                            self.move_up();
+                        }
+                        batch.wants_drain = false;
+                    }
+                    KeyCode::PageDown => {
+                        let h = self.current_edit_height();
+                        for _ in 0..h {
+                            self.move_down();
+                        }
+                        batch.wants_drain = false;
+                    }
+                    _ => {}
+                }
+            }
+            // Bracketed paste: the whole pasted region arrives as one event,
+            // so we insert it in one shot and recompute exactly once.
+            Event::Paste(text) => {
+                self.insert_text(&text);
+                batch.dirty = true;
+                batch.wants_drain = true;
+            }
+            Event::Resize(c, r) => {
+                self.cols = c;
+                self.rows = r;
+            }
+            _ => {}
+        }
+        Ok(())
     }
 
     // ---- editing primitives ----
@@ -272,6 +376,28 @@ impl Editor {
     fn insert_char(&mut self, c: char) {
         self.lines[self.row].insert(self.col, c);
         self.col += 1;
+    }
+
+    /// Insert an arbitrary chunk of text (which may span multiple lines) at
+    /// the cursor, advancing the cursor to the end of the inserted text.
+    /// Used to apply a bracketed paste in a single pass. All common line
+    /// endings (`\n`, `\r\n`, bare `\r`) are normalized to logical new lines.
+    fn insert_text(&mut self, text: &str) {
+        let normalized: String = text.replace("\r\n", "\n").replace('\r', "\n");
+        let mut first = true;
+        for line in normalized.split('\n') {
+            if !first {
+                let rest: Vec<char> = self.lines[self.row].drain(self.col..).collect();
+                self.lines.insert(self.row + 1, rest);
+                self.row += 1;
+                self.col = 0;
+            }
+            first = false;
+            for c in line.chars() {
+                self.lines[self.row].insert(self.col, c);
+                self.col += 1;
+            }
+        }
     }
 
     fn newline(&mut self) {
@@ -322,22 +448,37 @@ impl Editor {
     }
 
     fn move_up(&mut self) {
-        if self.row > 0 {
+        let w = self.content_w();
+        if w == 0 {
+            return;
+        }
+        if self.col >= w {
+            // Same logical line, previous visual row.
+            self.col -= w;
+        } else if self.row > 0 {
+            // Jump to the last visual row of the previous logical line,
+            // preserving the horizontal (x) position.
             self.row -= 1;
-            self.clamp_row();
+            let prev_len = self.lines[self.row].len();
+            let last_vrow = prev_len / w;
+            self.col = (last_vrow * w + self.col).min(prev_len);
         }
     }
 
     fn move_down(&mut self) {
-        if self.row + 1 < self.lines.len() {
-            self.row += 1;
-            self.clamp_row();
+        let w = self.content_w();
+        if w == 0 {
+            return;
         }
-    }
-
-    fn clamp_row(&mut self) {
-        if self.col > self.lines[self.row].len() {
-            self.col = self.lines[self.row].len();
+        let line_len = self.lines[self.row].len();
+        if self.col / w < line_len / w {
+            // Same logical line, next visual row.
+            self.col = (self.col + w).min(line_len);
+        } else if self.row + 1 < self.lines.len() {
+            // First visual row of the next logical line, preserving x.
+            self.row += 1;
+            let next_len = self.lines[self.row].len();
+            self.col = (self.col % w).min(next_len);
         }
     }
 
@@ -476,19 +617,46 @@ impl Editor {
         self.inner_height()
     }
 
-    fn scroll_to_cursor(&mut self, edit_h: usize) {
-        if self.row < self.top {
-            self.top = self.row;
+    /// Build the wrap map for the current content at the current content
+    /// width. Called once per frame in [`render`](Self::render) and reused
+    /// for scrolling and cursor positioning.
+    fn build_wrap_map(&self) -> WrapMap {
+        let w = self.content_w();
+        let mut line_vrow_start = Vec::with_capacity(self.lines.len());
+        let mut segments: Vec<(usize, usize, usize)> = Vec::new();
+        let mut vrow = 0usize;
+        for (li, line) in self.lines.iter().enumerate() {
+            line_vrow_start.push(vrow);
+            let len = line.len();
+            let n_rows = if w == 0 { 1 } else { len / w + 1 };
+            for k in 0..n_rows {
+                let start = k * w;
+                let end = (start + w).min(len);
+                segments.push((li, start, end));
+                vrow += 1;
+            }
         }
-        if self.row >= self.top + edit_h && edit_h > 0 {
-            self.top = self.row + 1 - edit_h;
+        WrapMap {
+            line_vrow_start,
+            segments,
         }
-        let cw = self.content_w();
-        if self.col < self.left {
-            self.left = self.col;
+    }
+
+    /// The visual row (0-indexed from the top of the document) on which the
+    /// cursor currently sits.
+    fn cursor_vrow(&self, map: &WrapMap) -> usize {
+        let w = self.content_w();
+        let offset = if w == 0 { 0 } else { self.col / w };
+        map.line_vrow_start[self.row] + offset
+    }
+
+    fn scroll_to_cursor(&mut self, map: &WrapMap, edit_h: usize) {
+        let cv = self.cursor_vrow(map);
+        if cv < self.top {
+            self.top = cv;
         }
-        if self.col >= self.left + cw && cw > 0 {
-            self.left = self.col + 1 - cw;
+        if cv >= self.top + edit_h && edit_h > 0 {
+            self.top = cv + 1 - edit_h;
         }
     }
 
@@ -505,7 +673,8 @@ impl Editor {
 
         let wrapped_errors = self.error_lines();
         let edit_h = self.edit_height(wrapped_errors.len());
-        self.scroll_to_cursor(edit_h);
+        let map = self.build_wrap_map();
+        self.scroll_to_cursor(&map, edit_h);
 
         let bgs = compute_block_bgs(&self.lines);
         let is_header = compute_header_flags(&self.lines);
@@ -543,15 +712,16 @@ impl Editor {
             )?;
             // content
             queue!(stdout, cursor::MoveTo(cx0 as u16, y))?;
-            let li = self.top + vi;
-            if li < self.lines.len() {
+            let vrow = self.top + vi;
+            if vrow < map.segments.len() {
+                let (li, cs, _ce) = map.segments[vrow];
                 render_line(
                     stdout,
                     &self.lines[li],
                     bgs[li],
                     is_header[li],
                     is_param_name[li],
-                    self.left,
+                    cs,
                     cw,
                 )?;
             } else {
@@ -613,8 +783,9 @@ impl Editor {
         )?;
 
         // ---- cursor ----
-        let cx = (cx0 + self.col - self.left) as u16;
-        let cy = (itop + self.row - self.top) as u16;
+        let cursor_v = self.cursor_vrow(&map);
+        let cx = (cx0 + if cw == 0 { 0 } else { self.col % cw }) as u16;
+        let cy = (itop + cursor_v.saturating_sub(self.top)) as u16;
         queue!(stdout, cursor::MoveTo(cx, cy), cursor::Show)?;
 
         Ok(())
