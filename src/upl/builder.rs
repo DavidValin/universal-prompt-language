@@ -283,40 +283,83 @@ impl PromptBuilder {
 
         let referenced = self.referenced_type_defs();
 
+        // Validate all JSON keys correspond to declared parameters.
+        for (key, _) in obj {
+            let found = self
+                .prompt
+                .variable_definitions
+                .iter()
+                .any(|(k, _)| k.to_lowercase() == key.to_lowercase());
+            if !found {
+                return Err(BuilderError::Validation(format!(
+                    "unknown parameter '{}' in JSON (not declared in prompt)",
+                    key
+                )));
+            }
+        }
+
         // Start with defaults for all declared variables (including
         // object_shape type definitions, which are seeded but never expected
         // in the JSON).
         let mut values = self.defaults_to_values();
 
-        for (key, jval) in obj {
-            // Find the matching variable definition (case-insensitive).
-            let (declared_name, def) = self
-                .prompt
-                .variable_definitions
-                .iter()
-                .find(|(k, _)| k.to_lowercase() == key.to_lowercase())
-                .ok_or_else(|| {
-                    BuilderError::Validation(format!(
-                        "unknown parameter '{}' in JSON (not declared in prompt)",
-                        key
-                    ))
-                })?;
-
+        // Process in declaration order so condition expressions can reference
+        // already-processed parameters (RFC §3.7 / §9.5: a condition may
+        // only reference parameters declared before the one carrying it).
+        for (declared_name, def) in &self.prompt.variable_definitions {
             // object_shape types are not settable.
             if referenced.contains(&declared_name.to_lowercase()) {
-                return Err(BuilderError::Validation(format!(
-                    "parameter '{}' is an object_shape type definition and cannot be set via JSON",
-                    key
-                )));
-            }
-
-            // null means "use default" — skip overriding.
-            if jval.is_null() {
+                if let Some((_, jv)) = obj
+                    .iter()
+                    .find(|(k, _)| k.to_lowercase() == declared_name.to_lowercase())
+                {
+                    if !jv.is_null() {
+                        return Err(BuilderError::Validation(format!(
+                            "parameter '{}' is an object_shape type definition and cannot be set via JSON",
+                            declared_name
+                        )));
+                    }
+                }
                 continue;
             }
 
-            let val = self.json_to_variable_value(jval, def, declared_name)?;
-            values.insert(declared_name.clone(), val);
+            // Evaluate build-time condition (RFC §3.7).
+            let is_hidden = if let Some(cond) = &def.exclude_condition {
+                is_condition_hidden(cond, &values)?
+            } else {
+                false
+            };
+
+            // Find the matching JSON value (case-insensitive).
+            let json_val = obj
+                .iter()
+                .find(|(k, _)| k.to_lowercase() == declared_name.to_lowercase())
+                .map(|(_, v)| v);
+
+            if is_hidden {
+                // Parameter is hidden by its condition — reject if present
+                // and non-null in the JSON.
+                if let Some(jv) = json_val {
+                    if !jv.is_null() {
+                        return Err(BuilderError::Validation(format!(
+                            "parameter '{}' is hidden by its condition and cannot be set via JSON",
+                            declared_name
+                        )));
+                    }
+                }
+                // Keep the default value already in `values`.
+                continue;
+            }
+
+            // Not hidden — accept JSON value if present and non-null.
+            if let Some(jv) = json_val {
+                // null means "use default" — skip overriding.
+                if jv.is_null() {
+                    continue;
+                }
+                let val = self.json_to_variable_value(jv, def, declared_name)?;
+                values.insert(declared_name.clone(), val);
+            }
         }
 
         Ok(values)
@@ -547,6 +590,41 @@ impl PromptBuilder {
 
         while idx < defs.len() {
             let (key, def) = &defs[idx];
+
+            // Evaluate build-time condition (RFC §3.7): a truthy condition
+            // hides (excludes) the parameter from the build — skip it and
+            // use its default value. The condition can only reference
+            // parameters declared before this one, so their values are
+            // already collected and available in `values`.
+            if let Some(cond) = &def.exclude_condition {
+                let mut current = ValueMap::new();
+                for ((k, _), v) in defs.iter().zip(&values) {
+                    current.insert(k.clone(), v.clone());
+                }
+                if is_condition_hidden(cond, &current)? {
+                    let default = self.default_value(key, def);
+                    if idx < values.len() {
+                        values[idx] = default;
+                    } else {
+                        values.push(default);
+                    }
+                    idx += 1;
+                    if let Some(h) = hctx.as_mut() {
+                        let stored = &values[idx - 1];
+                        h.update_field(key, stored, idx);
+                        let mut stderr = std::io::stderr();
+                        if let Ok(Some(SidebarOutcome::Select(uuid))) =
+                            build_history::check_ctrl_h(&mut stderr, &mut h.history, 100)
+                        {
+                            if uuid != h.record.uuid {
+                                return Err(BuilderError::SwitchBuild { uuid });
+                            }
+                        }
+                    }
+                    continue;
+                }
+            }
+
             // Prefer the previously collected value (so going back keeps it),
             // falling back to the prompt's declared `def:` default.
             let default = values
@@ -910,6 +988,7 @@ impl PromptBuilder {
             label: None,
             type_ref: None,
             ofields_definitions: def.ofields_definitions.clone(),
+            exclude_condition: None,
         };
 
         let mut items: Vec<VariableValue> = Vec::new();
@@ -1044,6 +1123,7 @@ fn synthesize_elem_def(def: &VariableDefinition, etype: VariableType) -> Variabl
         label: None,
         type_ref: None,
         ofields_definitions: def.ofields_definitions.clone(),
+        exclude_condition: None,
     }
 }
 
@@ -1206,6 +1286,16 @@ fn truthy(v: &VariableValue) -> bool {
         VariableValue::List(l) => !l.is_empty(),
         VariableValue::Object(o) => !o.is_empty(),
     }
+}
+
+/// Evaluate a build-time `condition` expression (RFC §3.7) against the
+/// supplied top-level values. Returns `true` when the condition is truthy,
+/// meaning the parameter carrying the condition is **hidden** (excluded from
+/// the build). Returns `false` when the parameter should be shown (asked).
+fn is_condition_hidden(cond: &CondExpr, values: &ValueMap) -> Result<bool, BuilderError> {
+    let scope: Vec<Frame> = vec![values.clone()];
+    let result = eval(cond, &scope)?;
+    Ok(truthy(&result))
 }
 
 // ---------------------------------------------------------------------------
@@ -2021,5 +2111,83 @@ port=[[[PORT]]]
 ";
         let out = jbuild(upl, r#"{"port": 80}"#).unwrap();
         assert_eq!(out, "port=80\n");
+    }
+
+    // --- exclude_condition field (RFC §3.7) unit tests ---
+
+    #[test]
+    fn json_condition_hidden_by_default() {
+        // Default credit_card_type = "visa" → condition truthy → hidden.
+        // Expiry absent from JSON → uses default.
+        let upl = "\
+--
+name: p
+params:
+  credit_card_type:
+    type: option_single
+    opts:
+      - \"visa\"
+      - \"mastercard\"
+    def: \"visa\"
+  visa_card_expiry_date:
+    type: string
+    exclude_condition: CREDIT_CARD_TYPE = \"visa\"
+    def: \"12/25\"
+--
+Card: [[[CREDIT_CARD_TYPE]]] Expiry: [[[VISA_CARD_EXPIRY_DATE]]]
+--
+";
+        let out = jbuild(upl, "{}").unwrap();
+        assert!(out.contains("Card: visa"));
+        assert!(out.contains("Expiry: 12/25"));
+    }
+
+    #[test]
+    fn json_condition_hidden_rejects_value() {
+        let upl = "\
+--
+name: p
+params:
+  credit_card_type:
+    type: option_single
+    opts:
+      - \"visa\"
+      - \"mastercard\"
+    def: \"visa\"
+  visa_card_expiry_date:
+    type: string
+    exclude_condition: CREDIT_CARD_TYPE = \"visa\"
+    def: \"12/25\"
+--
+Card: [[[CREDIT_CARD_TYPE]]] Expiry: [[[VISA_CARD_EXPIRY_DATE]]]
+--
+";
+        let res = jbuild(upl, r#"{"visa_card_expiry_date": "99/99"}"#);
+        assert!(matches!(res, Err(BuilderError::Validation(_))));
+    }
+
+    #[test]
+    fn json_condition_shown_accepts_value() {
+        let upl = "\
+--
+name: p
+params:
+  credit_card_type:
+    type: option_single
+    opts:
+      - \"visa\"
+      - \"mastercard\"
+    def: \"visa\"
+  visa_card_expiry_date:
+    type: string
+    exclude_condition: CREDIT_CARD_TYPE = \"visa\"
+    def: \"12/25\"
+--
+Card: [[[CREDIT_CARD_TYPE]]] Expiry: [[[VISA_CARD_EXPIRY_DATE]]]
+--
+";
+        let out = jbuild(upl, r#"{"credit_card_type": "mastercard", "visa_card_expiry_date": "06/28"}"#).unwrap();
+        assert!(out.contains("Card: mastercard"));
+        assert!(out.contains("Expiry: 06/28"));
     }
 }

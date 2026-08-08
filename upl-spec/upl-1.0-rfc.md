@@ -1,6 +1,6 @@
 # UPL — Universal Prompt Language
 
-* **Version:** 1.0-rc.2
+* **Version:** 1.0-rc.3
 * **Status:** Official Standard Specification
 * **File Extension:** `.txt` or `.upl`
 
@@ -86,6 +86,7 @@ Variables are declared under the `params` block. Each variable has the following
 | `etype`        | Conditional | `list`, `option_single`, `option_multi`     | Element type: a built-in type name (§3.1) — including the inline `object` (the variable then declares its element shape via its own `ofields`) — or the name of a declared `object_shape` variable (§3.4). Not allowed on `object`/`object_shape` (an object's shape is described by `ofields`). For `option_single` it is **optional** and defaults to `string`; for `option_multi` it is **required**. The allowed etypes for `option_single`/`option_multi` are `string`, `long_string`, `number`, the inline `object`, and a referenced `object_shape` (§3.4). `boolean`, `list`, `option_single`, `option_multi`, and `object_shape` (the literal type name) are not valid option etypes. The allowed etypes for `list` are `string`, `long_string`, `number`, `boolean`, the inline `object`, and a referenced `object_shape` (§3.4); `list`, `option_single`, `option_multi`, and `object_shape` (the literal type name) are not valid list etypes. |
 | `ofields`      | Conditional | `object`, `object_shape`                    | Map of object field definitions (recursive). Required on `object_shape`; on `object` either `ofields` (inline) or `type: <object_shape_name>` (§3.4.2) must be present, but not both.  |
 | `label`        | No          | `option_single`, `option_multi`             | Required when `etype` is a referenced `object_shape`: the field name (declared on that object_shape) whose value is shown as the menu label for each option. Ignored for scalar etypes. |
+| `exclude_condition` | No          | All top-level except `object_shape`         | A build-time condition expression (§5 syntax) that controls whether the parameter is **shown** or **hidden** during the build. When the condition evaluates to a **truthy** value, the parameter is **hidden** (excluded from the build — skipped during interactive collection and rejected if supplied via JSON). When the condition is **falsy** (or absent), the parameter is **shown** (asked) normally. A condition may only reference parameters declared *before* the one carrying it (see §3.7). |
 
 `def` is **optional** for every type. When `def` is omitted (and no value is supplied interactively or programmatically), the variable falls back to a type-appropriate default:
 
@@ -191,6 +192,7 @@ field above).
 - `opts` is only allowed for `option_single` and `option_multi`. Any other type declaring `opts` is a parse error. `opts` MUST contain **at least two entries** — a single-option menu is not meaningful and is a parse error.
 - All values supplied via `def`, `opts`, etc. must match the declared `type` and `etype`. Specifically, each entry in `opts` MUST be coercible to the option's `etype`: a `string`/`long_string` entry for a `string`/`long_string` etype, a `number` entry for a `number` etype, and an object literal matching the referenced object_shape's `ofields` shape (or the inline `ofields` shape) for an `object`/`object_shape` etype. A mismatch is a parse error.
 - The `def` value MUST match the declared `type` (and, for `list`/`option_multi`, its `etype`): a `def` for a `number` variable must be a number literal; a `def` for a `boolean` must be `true`/`false`; a `def` for a `string`/`long_string` must be a string; a `def` for an `object` or `object_shape` must be an object literal; a `def` for a `list` must be a list whose every element matches `etype`; a `def` for an `option_single` must be a single value matching `etype`; a `def` for an `option_multi` must be a list whose every element matches `etype`. A `def` value of the wrong kind is a parse error. (Object `def`s are checked for kind only — `object` — not for full field-shape conformance; extra or missing nested keys are tolerated and filled from defaults at render time.)
+- `exclude_condition` (§3.7) is only allowed on top-level (root) parameters — declaring it on a nested `ofields` entry is a parse error. It is not allowed on `object_shape` variables (they are never asked at build time). The condition expression uses the same syntax as body conditions (§5) and is parsed and validated at parse time (§9.5). Variable references inside a condition MUST be uppercase (§4.1) and MUST name a previously-declared top-level parameter; a forward or self-reference is a parse error.
 
 ### 3.3.1 Literal Value Syntax
 
@@ -403,6 +405,67 @@ Enabled:
 ```
 
 In the menu, the two options are shown as `auth` and `logs` (the values of the `name` field). The chosen objects are stored whole, so `[[[F.NAME]]]` and `[[[F.ENABLED]]]` resolve normally inside a loop.
+
+### 3.7 Build-Time Conditions (`exclude_condition`)
+
+A top-level parameter may declare an `exclude_condition` — a condition expression
+(evaluated with the operators in §5) that controls whether the parameter is
+**shown** or **hidden** during the build:
+
+- **Condition is truthy → parameter is hidden.** The parameter is excluded
+  from the build: it is skipped during interactive collection (its declared
+  `def` default is used) and, if building from JSON, supplying a non-null value
+  for it is a build error.
+- **Condition is falsy (or no `exclude_condition` is declared) → parameter is shown.**
+  The parameter is asked normally during interactive collection and accepted
+  from JSON as usual.
+
+The condition expression uses the same syntax as body conditions (§5) and
+references top-level parameters by their bare, **uppercase** name (e.g.
+`CREDIT_CARD_TYPE`, not `[[[CREDIT_CARD_TYPE]]]`). At build time the condition
+is evaluated against the values collected or defaulted so far, in declaration
+order.
+
+To avoid circular or ambiguous evaluation, an `exclude_condition` may only reference
+parameters declared **before** the one carrying the condition. A forward or
+self-reference is a parse error (§9.5). The condition expression itself is
+parsed and validated at parse time, so syntax errors are reported before any
+build begins.
+
+```text
+params:
+  credit_card_type:
+    type: option_single
+    opts:
+      - "visa"
+      - "mastercard"
+    def: "visa"
+
+  visa_card_expiry_date:
+    type: string
+    desc: "Expiry date for Visa card"
+    exclude_condition: CREDIT_CARD_TYPE != "visa"
+    def: "12/25"
+```
+
+In this example, `visa_card_expiry_date` is **hidden** (excluded from the
+build) when `credit_card_type` is not `"visa"` — i.e. the condition
+`CREDIT_CARD_TYPE != "visa"` is truthy. When the card type *is* `"visa"`, the
+condition is falsy and the parameter is shown (asked). In other words, the
+expiry date is only collected for Visa cards.
+
+Rules:
+
+- `exclude_condition` is only allowed on **top-level** (root) parameters. Declaring it
+  on a nested `ofields` entry is a parse error.
+- `exclude_condition` is not allowed on `object_shape` variables (they are never asked
+  at build time, so a condition would be meaningless).
+- Variable references in a condition MUST be uppercase (§4.1) and MUST name a
+  previously-declared top-level parameter.
+- A parameter hidden by its condition still receives its `def` default value
+  for rendering — it is simply not prompted for interactively and cannot be
+  overridden via JSON.
+- The condition expression is parsed and validated at parse time (§9.5).
 
 ---
 
@@ -755,6 +818,7 @@ The ternary is the lowest-precedence operator. Parentheses may be used to group 
 | Code snippets containing `[[[...]]` sequences                           | Yes       |
 | Recursive object definitions (objects inside objects)                   | Yes       |
 | `source` provenance metadata field (§2.1)                               | Yes       |
+| Build-time `exclude_condition` on parameters (§3.7)                     | Yes       |
 
 ---
 
@@ -788,6 +852,7 @@ the metadata keys in the file.
 | `label`               | string (optional)                          | For `option_single`/`option_multi` with an `object_shape` etype: the field whose value is the menu label (§3.6). |
 | `type_ref`            | string (optional)                           | Name of the declared `object_shape` variable whose `ofields` an `object` (or nested object field) reuses via `type: <name>` (resolved at parse time into `ofields_definitions`); `type` is then `Object`. |
 | `ofields_definitions` | map<string, VariableDefinition> (optional) | Object fields (for `object`/`object_shape`, or resolved from an `object_shape` reference). |
+| `exclude_condition`   | CondExpr (optional)                        | Build-time condition (§3.7). When truthy at build time, the parameter is hidden (excluded from the build). Only on top-level parameters; not on `object_shape`. |
 
 ### 7.3 Value
 
@@ -1070,11 +1135,21 @@ A conforming UPL implementation MUST perform the following steps:
    (an unknown field is a parse error). A root variable that is not declared in
    `params` is **not** a parse error: its value may be supplied
    programmatically at render time (see the `[[[URL]]]` example in §3.5), and
-   existence of a *value* is enforced at render time (step 6) as `MissingValue`.
+   existence of a *value* is enforced at render time (step 7) as `MissingValue`.
+ 5a. **Validate conditions** — for each top-level parameter that declares an
+    `exclude_condition` (§3.7), verify that the condition expression is syntactically
+    valid (parsed with the §5 condition syntax), that every variable reference
+    inside it is uppercase (§4.1), and that every referenced variable is a
+    top-level parameter declared **before** the one carrying the condition
+    (forward and self-references are parse errors). Reject an `exclude_condition` on an
+    `object_shape` variable or on a nested `ofields` entry.
 6. **Render** — substitute variables, evaluate conditionals with runtime type checking (§5),
    and expand loops, using the rendering and truthiness rules in §4.6. A reference to a
    variable for which no value was supplied fails here with `MissingValue`; a `for` loop over
-   a non-list value fails here as well.
+   a non-list value fails here as well. At build time, before collecting or accepting a value
+   for a parameter with an `exclude_condition`, evaluate the condition against the values collected or
+   defaulted so far (in declaration order); a truthy condition hides (excludes) the parameter
+   from the build (§3.7).
 
 Errors raised at any step SHOULD include the offending field name, line number, and a clear
 description of the failure.
@@ -1112,4 +1187,8 @@ An implementation conforms to this standard if it:
   overload and the `==` alias for `=`.
 - Applies the operator precedence in §5.1.
 - Reports `for`/`if` block imbalance as parse errors (§4.5).
+- Supports the `exclude_condition` field on top-level parameters (§3.7): parses and
+  validates condition expressions at parse time (§9.5a), evaluates them at
+  build time to hide (exclude) parameters whose condition is truthy, and
+  rejects non-null values for hidden parameters supplied via JSON.
 - Reports errors as described in §9.

@@ -781,3 +781,250 @@ API: [[[API_NAME]]] ([[[LANGUAGE]]])
     assert!(out.contains("- posts: GET, POST"));
     assert!(out.contains("  - title (type: string, required: true)"));
 }
+
+// --- Build-time `exclude_condition` field (RFC §3.7) ---
+//
+// condition truthy → parameter is hidden (excluded from build): skipped
+// during interactive collection, rejected if supplied via JSON.
+// condition falsy → parameter is shown (asked) normally.
+
+#[test]
+fn json_condition_hidden_param_absent_uses_default() {
+    // credit_card_type defaults to "visa"; condition `CREDIT_CARD_TYPE = "visa"`
+    // is truthy → expiry is hidden. Expiry absent from JSON → OK (uses default).
+    let upl = "\
+--
+name: p
+params:
+  credit_card_type:
+    type: option_single
+    opts:
+      - \"visa\"
+      - \"mastercard\"
+    def: \"visa\"
+  visa_card_expiry_date:
+    type: string
+    exclude_condition: CREDIT_CARD_TYPE = \"visa\"
+    def: \"12/25\"
+--
+Card: [[[CREDIT_CARD_TYPE]]] Expiry: [[[VISA_CARD_EXPIRY_DATE]]]
+--
+";
+    // JSON doesn't include the hidden param — should succeed.
+    let out = build(upl, r#"{"credit_card_type": "visa"}"#).unwrap();
+    assert!(out.contains("Card: visa"));
+    assert!(out.contains("Expiry: 12/25"));
+}
+
+#[test]
+fn json_condition_hidden_param_present_is_error() {
+    let upl = "\
+--
+name: p
+params:
+  credit_card_type:
+    type: option_single
+    opts:
+      - \"visa\"
+      - \"mastercard\"
+    def: \"visa\"
+  visa_card_expiry_date:
+    type: string
+    exclude_condition: CREDIT_CARD_TYPE = \"visa\"
+    def: \"12/25\"
+--
+Card: [[[CREDIT_CARD_TYPE]]] Expiry: [[[VISA_CARD_EXPIRY_DATE]]]
+--
+";
+    // JSON includes the hidden param with a non-null value — should error.
+    let res = build(upl, r#"{"credit_card_type": "visa", "visa_card_expiry_date": "99/99"}"#);
+    assert!(matches!(res, Err(BuilderError::Validation(_))));
+}
+
+#[test]
+fn json_condition_hidden_param_null_is_ok() {
+    let upl = "\
+--
+name: p
+params:
+  credit_card_type:
+    type: option_single
+    opts:
+      - \"visa\"
+      - \"mastercard\"
+    def: \"visa\"
+  visa_card_expiry_date:
+    type: string
+    exclude_condition: CREDIT_CARD_TYPE = \"visa\"
+    def: \"12/25\"
+--
+Card: [[[CREDIT_CARD_TYPE]]] Expiry: [[[VISA_CARD_EXPIRY_DATE]]]
+--
+";
+    // JSON includes the hidden param as null — should be OK (null = use default).
+    let out = build(upl, r#"{"credit_card_type": "visa", "visa_card_expiry_date": null}"#).unwrap();
+    assert!(out.contains("Expiry: 12/25"));
+}
+
+#[test]
+fn json_condition_falsy_param_shown_accepts_value() {
+    // credit_card_type is "mastercard"; condition `CREDIT_CARD_TYPE = "visa"`
+    // is falsy → expiry is shown. JSON provides a value → accepted.
+    let upl = "\
+--
+name: p
+params:
+  credit_card_type:
+    type: option_single
+    opts:
+      - \"visa\"
+      - \"mastercard\"
+    def: \"visa\"
+  visa_card_expiry_date:
+    type: string
+    exclude_condition: CREDIT_CARD_TYPE = \"visa\"
+    def: \"12/25\"
+--
+Card: [[[CREDIT_CARD_TYPE]]] Expiry: [[[VISA_CARD_EXPIRY_DATE]]]
+--
+";
+    let out = build(upl, r#"{"credit_card_type": "mastercard", "visa_card_expiry_date": "06/28"}"#).unwrap();
+    assert!(out.contains("Card: mastercard"));
+    assert!(out.contains("Expiry: 06/28"));
+}
+
+#[test]
+fn json_condition_falsy_param_absent_uses_default() {
+    let upl = "\
+--
+name: p
+params:
+  credit_card_type:
+    type: option_single
+    opts:
+      - \"visa\"
+      - \"mastercard\"
+    def: \"visa\"
+  visa_card_expiry_date:
+    type: string
+    exclude_condition: CREDIT_CARD_TYPE = \"visa\"
+    def: \"12/25\"
+--
+Card: [[[CREDIT_CARD_TYPE]]] Expiry: [[[VISA_CARD_EXPIRY_DATE]]]
+--
+";
+    let out = build(upl, r#"{"credit_card_type": "mastercard"}"#).unwrap();
+    assert!(out.contains("Card: mastercard"));
+    assert!(out.contains("Expiry: 12/25"));
+}
+
+#[test]
+fn json_condition_depends_on_json_value() {
+    // The condition is evaluated against JSON-supplied values, not just defaults.
+    // Default for credit_card_type is "visa" (condition truthy → hidden).
+    // But JSON overrides it to "mastercard" (condition falsy → shown).
+    let upl = "\
+--
+name: p
+params:
+  credit_card_type:
+    type: option_single
+    opts:
+      - \"visa\"
+      - \"mastercard\"
+    def: \"visa\"
+  visa_card_expiry_date:
+    type: string
+    exclude_condition: CREDIT_CARD_TYPE = \"visa\"
+    def: \"12/25\"
+--
+Card: [[[CREDIT_CARD_TYPE]]] Expiry: [[[VISA_CARD_EXPIRY_DATE]]]
+--
+";
+    // JSON sets credit_card_type to "mastercard" → condition is falsy →
+    // expiry is shown → providing a value is OK.
+    let out = build(upl, r#"{"credit_card_type": "mastercard", "visa_card_expiry_date": "06/28"}"#).unwrap();
+    assert!(out.contains("Card: mastercard"));
+    assert!(out.contains("Expiry: 06/28"));
+}
+
+#[test]
+fn json_condition_depends_on_json_value_hidden() {
+    // Default for credit_card_type is "visa" → condition is truthy → hidden.
+    // JSON sets credit_card_type to "visa" → condition still truthy →
+    // expiry is hidden → providing a value is an error.
+    let upl = "\
+--
+name: p
+params:
+  credit_card_type:
+    type: option_single
+    opts:
+      - \"visa\"
+      - \"mastercard\"
+    def: \"visa\"
+  visa_card_expiry_date:
+    type: string
+    exclude_condition: CREDIT_CARD_TYPE = \"visa\"
+    def: \"12/25\"
+--
+Card: [[[CREDIT_CARD_TYPE]]] Expiry: [[[VISA_CARD_EXPIRY_DATE]]]
+--
+";
+    let res = build(upl, r#"{"credit_card_type": "visa", "visa_card_expiry_date": "06/28"}"#);
+    assert!(matches!(res, Err(BuilderError::Validation(_))));
+}
+
+#[test]
+fn json_condition_with_number_comparison() {
+    let upl = "\
+--
+name: p
+params:
+  port:
+    type: number
+    def: 80
+  use_ssl:
+    type: boolean
+    exclude_condition: PORT = 443
+    def: false
+--
+Port: [[[PORT]]] SSL: [[[USE_SSL]]]
+--
+";
+    // Default port=80 → condition is falsy → use_ssl is shown.
+    // JSON sets port=443 → condition is truthy → use_ssl is hidden.
+    // Providing use_ssl when hidden → error.
+    let res = build(upl, r#"{"port": 443, "use_ssl": true}"#);
+    assert!(matches!(res, Err(BuilderError::Validation(_))));
+
+    // Not providing use_ssl when hidden → OK (uses default).
+    let out = build(upl, r#"{"port": 443}"#).unwrap();
+    assert!(out.contains("Port: 443"));
+    assert!(out.contains("SSL: false"));
+
+    // port=80 (default) → condition falsy → use_ssl shown → can provide value.
+    let out = build(upl, r#"{"port": 80, "use_ssl": true}"#).unwrap();
+    assert!(out.contains("Port: 80"));
+    assert!(out.contains("SSL: true"));
+}
+
+#[test]
+fn json_condition_no_condition_param_works_normally() {
+    let upl = "\
+--
+name: p
+params:
+  a:
+    type: string
+    def: \"x\"
+  b:
+    type: string
+    def: \"y\"
+--
+A=[[[A]]] B=[[[B]]]
+--
+";
+    let out = build(upl, r#"{"a": "1", "b": "2"}"#).unwrap();
+    assert_eq!(out, "A=1 B=2\n");
+}

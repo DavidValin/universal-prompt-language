@@ -65,7 +65,6 @@ pub struct VariableDefinition {
     /// referenced object_shape; ignored for scalar etypes and the inline
     /// `object` etype.
     pub label: Option<String>,
-    /// Name of a declared `object_shape` variable whose `ofields` an `object`
     /// Name of a declared `object_shape` variable referenced via
     /// `type: <name>` (RFC §3.4.2). When set, the variable is an object whose
     /// `ofields` are spliced in from the referenced object_shape at parse
@@ -73,6 +72,14 @@ pub struct VariableDefinition {
     /// downstream consumers.
     pub type_ref: Option<String>,
     pub ofields_definitions: Option<VariableDefinitions>,
+    /// Optional build-time exclude condition (RFC §3.7). When present, the
+    /// parameter is **hidden** (excluded from the build) if the condition
+    /// evaluates to a truthy value at build time; otherwise the parameter is
+    /// shown (asked) normally. The condition expression uses the same syntax
+    /// as body conditions (§5) and references top-level parameters by their
+    /// bare uppercase name. Only top-level (root) parameters may declare an
+    /// `exclude_condition`; `object_shape` variables may not.
+    pub exclude_condition: Option<CondExpr>,
 }
 
 pub type VariableDefinitions = IndexMap<String, VariableDefinition>;
@@ -238,6 +245,20 @@ pub enum PromptParseError {
     LowercaseIdentifier { name: String, ctx: String },
     #[error("File could not be read: {0}")]
     Io(String),
+    #[error("'exclude_condition' is only allowed on top-level parameters (got nested field '{field}')")]
+    ConditionOnNestedField { field: String },
+    #[error("'exclude_condition' is not allowed on 'object_shape' variable '{name}' (object_shape is never asked at build time)")]
+    ConditionOnObjectShape { name: String },
+    #[error("'exclude_condition' on '{condition_param}' references parameter '{referenced_param}' which is declared after it; a condition may only reference parameters declared before it")]
+    ConditionRefersToLaterParam {
+        condition_param: String,
+        referenced_param: String,
+    },
+    #[error("'exclude_condition' on '{condition_param}' references undeclared variable '{referenced_param}'")]
+    ConditionRefersToUndeclared {
+        condition_param: String,
+        referenced_param: String,
+    },
 }
 
 // --- Parsing Context ---
@@ -539,6 +560,13 @@ impl PromptParser {
         // `element_type`/`ofields_definitions`.
         Self::validate_all_definitions(&var_defs, &defaults)?;
 
+        // Validate condition expressions (RFC §9.5): syntax already parsed
+        // during `parse_definitions_block`; here we validate ordering (a
+        // condition may only reference parameters declared before it),
+        // reject conditions on `object_shape`, and reject lowercase
+        // variable references in condition expressions.
+        Self::validate_conditions(&var_defs)?;
+
         // Consume the closing '--' delimiter that ends the params block
         if ctx.pos < ctx.content.len() && ctx.content[ctx.pos].trim() == "--" {
             ctx.pos += 1;
@@ -728,6 +756,7 @@ impl PromptParser {
                 label: None,
                 type_ref: None,
                 ofields_definitions: None,
+                exclude_condition: None,
             };
 
             // Move to the first property line of this variable
@@ -793,6 +822,15 @@ impl PromptParser {
                     }
                     "label" => {
                         def.label = Some(pv.trim().to_string());
+                        pos += 1;
+                    }
+                    "exclude_condition" => {
+                        if !prefix.is_empty() {
+                            return Err(PromptParseError::ConditionOnNestedField {
+                                field: var_name.clone(),
+                            });
+                        }
+                        def.exclude_condition = Some(parse_condition(pv.trim())?);
                         pos += 1;
                     }
                     "def" => {
@@ -1205,6 +1243,58 @@ impl PromptParser {
         Ok(())
     }
 
+    /// Validate condition expressions on top-level parameters (RFC §9.5).
+    ///
+    /// For each parameter that declares a `condition`:
+    /// - Reject conditions on `object_shape` variables (they are never asked).
+    /// - Every variable referenced in the condition MUST be uppercase (like
+    ///   body references, §4.1).
+    /// - Every referenced variable MUST be a previously-declared top-level
+    ///   parameter (a condition may only reference parameters declared
+    ///   *before* the one carrying the condition, so its value is already
+    ///   known at build time).
+    fn validate_conditions(defs: &VariableDefinitions) -> Result<(), PromptParseError> {
+        let names: Vec<String> = defs.keys().cloned().collect();
+        for (i, (name, def)) in defs.iter().enumerate() {
+            let Some(cond) = &def.exclude_condition else {
+                continue;
+            };
+            if def.r#type == VariableType::ObjectShape {
+                return Err(PromptParseError::ConditionOnObjectShape {
+                    name: name.clone(),
+                });
+            }
+            let vars = collect_cond_var_names(cond);
+            for v in &vars {
+                // Uppercase enforcement (§4.1).
+                if v.chars().any(|c| c.is_ascii_lowercase()) {
+                    return Err(PromptParseError::LowercaseIdentifier {
+                        name: v.clone(),
+                        ctx: "condition".into(),
+                    });
+                }
+                // Must be a declared top-level parameter.
+                let v_lc = v.to_lowercase();
+                match names.iter().position(|n| n.to_lowercase() == v_lc) {
+                    Some(p) if p < i => {} // OK — declared before
+                    Some(_) => {
+                        return Err(PromptParseError::ConditionRefersToLaterParam {
+                            condition_param: name.clone(),
+                            referenced_param: v.clone(),
+                        });
+                    }
+                    None => {
+                        return Err(PromptParseError::ConditionRefersToUndeclared {
+                            condition_param: name.clone(),
+                            referenced_param: v.clone(),
+                        });
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Validate that a parsed `def` value matches the declared `type` (and
     /// `element_type` for lists), per RFC §3.3 ("All values supplied via
     /// `def`, `opts`, etc. must match the declared `type` and `etype` ... A
@@ -1434,9 +1524,12 @@ impl PromptParser {
             if let Some(et) = &def.element_type {
                 println!("{}  {}: {:?}", indent, Self::color_key("EType", depth), et);
             }
-            if let Some(label) = &def.label {
-                println!("{}  {}: {}", indent, Self::color_key("Label", depth), label);
-            }
+if let Some(label) = &def.label {
+            println!("{}  {}: {}", indent, Self::color_key("Label", depth), label);
+        }
+        if def.exclude_condition.is_some() {
+            println!("{}  {}: <exclude_condition>", indent, Self::color_key("ExcludeCondition", depth));
+        }
             if let Some(ofields) = &def.ofields_definitions {
                 println!("{}  {}:", indent, Self::color_key("OFields", depth));
                 Self::print_definitions(ofields, depth + 1);
@@ -2321,6 +2414,28 @@ fn parse_condition(src: &str) -> Result<CondExpr, PromptParseError> {
     let toks = tokenize_cond(&normalized)?;
     let mut p = CondParser { toks, pos: 0 };
     p.parse()
+}
+
+/// Collect all variable names referenced in a condition expression AST.
+/// Used by `validate_conditions` to enforce the ordering rule (RFC §9.5):
+/// a condition may only reference parameters declared *before* the one
+/// carrying the condition.
+fn collect_cond_var_names(cond: &CondExpr) -> Vec<String> {
+    let mut vars = Vec::new();
+    collect_cond_vars(cond, &mut vars);
+    vars
+}
+
+fn collect_cond_vars(cond: &CondExpr, vars: &mut Vec<String>) {
+    match cond {
+        CondExpr::Literal(_) => {}
+        CondExpr::Var(name) => vars.push(name.clone()),
+        CondExpr::Not(inner) => collect_cond_vars(inner, vars),
+        CondExpr::Bin { left, right, .. } => {
+            collect_cond_vars(left, vars);
+            collect_cond_vars(right, vars);
+        }
+    }
 }
 
 /// Rewrite method-call conditions (`x.contains(y)`, `x.starts_with(y)`,

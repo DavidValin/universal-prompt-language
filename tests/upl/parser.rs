@@ -820,3 +820,290 @@ fn test_validate_prompt_file_mismatch_is_error() {
     assert!(validate_prompt_file(&prompt, Path::new("/tmp/my_prompt.md")).is_err());
 }
 
+// --- Build-time `exclude_condition` field validation (RFC §3.7 / §9.5a) ---
+
+#[test]
+fn test_condition_valid_parses() {
+    let content = r#"--
+name: p
+params:
+  credit_card_type:
+    type: option_single
+    opts:
+      - "visa"
+      - "mastercard"
+    def: "visa"
+  visa_card_expiry_date:
+    type: string
+    desc: "Expiry date for Visa card"
+    exclude_condition: CREDIT_CARD_TYPE != "visa"
+    def: "12/25"
+--
+Card: [[[CREDIT_CARD_TYPE]]] Expiry: [[[VISA_CARD_EXPIRY_DATE]]]
+--
+"#;
+    let prompt = PromptParser::parse(content).expect("should parse");
+    let vd = prompt.variable_definitions.get("visa_card_expiry_date").unwrap();
+    assert!(vd.exclude_condition.is_some(), "condition should be parsed");
+}
+
+#[test]
+fn test_condition_with_multiple_vars_parses() {
+    let content = r#"--
+name: p
+params:
+  a:
+    type: string
+    def: "x"
+  b:
+    type: number
+    def: 10
+  c:
+    type: string
+    exclude_condition: B > 5
+    def: "c"
+--
+[[[C]]]
+"#;
+    let prompt = PromptParser::parse(content).expect("should parse");
+    let vd = prompt.variable_definitions.get("c").unwrap();
+    assert!(vd.exclude_condition.is_some());
+}
+
+#[test]
+fn test_condition_not_operator_parses() {
+    let content = r#"--
+name: p
+params:
+  flag:
+    type: boolean
+    def: true
+  other:
+    type: string
+    exclude_condition: !FLAG
+    def: "hello"
+--
+[[[OTHER]]]
+"#;
+    let prompt = PromptParser::parse(content).expect("should parse");
+    let vd = prompt.variable_definitions.get("other").unwrap();
+    assert!(vd.exclude_condition.is_some());
+}
+
+#[test]
+fn test_condition_contains_operator_parses() {
+    let content = r#"--
+name: p
+params:
+  text:
+    type: string
+    def: "hello world"
+  other:
+    type: string
+    exclude_condition: TEXT contains "world"
+    def: "x"
+--
+[[[OTHER]]]
+"#;
+    let prompt = PromptParser::parse(content).expect("should parse");
+    let vd = prompt.variable_definitions.get("other").unwrap();
+    assert!(vd.exclude_condition.is_some());
+}
+
+#[test]
+fn test_condition_forward_reference_is_error() {
+    // A condition referencing a parameter declared AFTER it is a parse error.
+    let content = r#"--
+name: p
+params:
+  b:
+    type: string
+    exclude_condition: A = "x"
+    def: "b"
+  a:
+    type: string
+    def: "x"
+--
+[[[A]]] [[[B]]]
+"#;
+    let res = PromptParser::parse(content);
+    assert!(
+        matches!(res, Err(PromptParseError::ConditionRefersToLaterParam { .. })),
+        "forward reference in condition should be error: {:?}",
+        res
+    );
+}
+
+#[test]
+fn test_condition_self_reference_is_error() {
+    let content = r#"--
+name: p
+params:
+  a:
+    type: string
+    exclude_condition: A = "x"
+    def: "a"
+--
+[[[A]]]
+"#;
+    let res = PromptParser::parse(content);
+    assert!(
+        matches!(res, Err(PromptParseError::ConditionRefersToLaterParam { .. })),
+        "self reference in condition should be error: {:?}",
+        res
+    );
+}
+
+#[test]
+fn test_condition_undeclared_variable_is_error() {
+    let content = r#"--
+name: p
+params:
+  a:
+    type: string
+    exclude_condition: UNDECLARED = "x"
+    def: "a"
+--
+[[[A]]]
+"#;
+    let res = PromptParser::parse(content);
+    assert!(
+        matches!(res, Err(PromptParseError::ConditionRefersToUndeclared { .. })),
+        "undeclared variable in condition should be error: {:?}",
+        res
+    );
+}
+
+#[test]
+fn test_condition_on_object_shape_is_error() {
+    let content = r#"--
+name: p
+params:
+  shape:
+    type: object_shape
+    exclude_condition: SOME_VAR = "x"
+    ofields:
+      x:
+        type: string
+--
+[[[X]]]
+"#;
+    let res = PromptParser::parse(content);
+    assert!(
+        matches!(res, Err(PromptParseError::ConditionOnObjectShape { .. })),
+        "condition on object_shape should be error: {:?}",
+        res
+    );
+}
+
+#[test]
+fn test_condition_on_nested_field_is_error() {
+    let content = r#"--
+name: p
+params:
+  obj:
+    type: object
+    ofields:
+      x:
+        type: string
+        exclude_condition: SOME_VAR = "y"
+        def: "x"
+--
+[[[OBJ.X]]]
+"#;
+    let res = PromptParser::parse(content);
+    assert!(
+        matches!(res, Err(PromptParseError::ConditionOnNestedField { .. })),
+        "condition on nested field should be error: {:?}",
+        res
+    );
+}
+
+#[test]
+fn test_condition_lowercase_variable_is_error() {
+    let content = r#"--
+name: p
+params:
+  a:
+    type: string
+    def: "x"
+  b:
+    type: string
+    exclude_condition: a = "x"
+    def: "b"
+--
+[[[A]]] [[[B]]]
+"#;
+    let res = PromptParser::parse(content);
+    assert!(
+        matches!(res, Err(PromptParseError::LowercaseIdentifier { .. })),
+        "lowercase variable in condition should be error: {:?}",
+        res
+    );
+}
+
+#[test]
+fn test_condition_invalid_syntax_is_error() {
+    let content = r#"--
+name: p
+params:
+  a:
+    type: string
+    def: "x"
+  b:
+    type: string
+    exclude_condition: A =
+    def: "b"
+--
+[[[B]]]
+"#;
+    let res = PromptParser::parse(content);
+    assert!(
+        res.is_err(),
+        "invalid condition syntax should be error: {:?}",
+        res
+    );
+}
+
+#[test]
+fn test_condition_with_number_comparison_parses() {
+    let content = r#"--
+name: p
+params:
+  port:
+    type: number
+    def: 80
+  use_ssl:
+    type: boolean
+    exclude_condition: PORT != 443
+    def: false
+--
+Port: [[[PORT]]] SSL: [[[USE_SSL]]]
+"#;
+    let prompt = PromptParser::parse(content).expect("should parse");
+    let vd = prompt.variable_definitions.get("use_ssl").unwrap();
+    assert!(vd.exclude_condition.is_some());
+}
+
+#[test]
+fn test_condition_case_insensitive_reference_parses() {
+    // Condition variable references must be uppercase; the matching against
+    // the declared lowercase name is case-insensitive.
+    let content = r#"--
+name: p
+params:
+  my_var:
+    type: string
+    def: "test"
+  other:
+    type: string
+    exclude_condition: MY_VAR = "test"
+    def: "o"
+--
+[[[OTHER]]]
+"#;
+    let prompt = PromptParser::parse(content).expect("should parse");
+    let vd = prompt.variable_definitions.get("other").unwrap();
+    assert!(vd.exclude_condition.is_some());
+}
+

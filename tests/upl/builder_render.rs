@@ -1426,4 +1426,140 @@ host=[[[CFG.HOST]]] port=[[[CFG.PORT]]] name=[[[CFG.NAME]]]
     assert_eq!(out, "host=localhost port=8080 name=\n");
 }
 
+// --- Build-time `condition` field (RFC §3.7) ---
+//
+// Conditions are evaluated during interactive collection and JSON building,
+// not during rendering. `render_with_defaults` uses all defaults regardless
+// of conditions; `render` with explicit values renders whatever was supplied.
+// These tests verify that prompts with conditions parse and render correctly.
+
+#[test]
+fn integration_condition_render_with_defaults() {
+    let upl = "\
+--
+name: p
+params:
+  credit_card_type:
+    type: option_single
+    opts:
+      - \"visa\"
+      - \"mastercard\"
+    def: \"visa\"
+  visa_card_expiry_date:
+    type: string
+    exclude_condition: CREDIT_CARD_TYPE = \"visa\"
+    def: \"12/25\"
+--
+Card: [[[CREDIT_CARD_TYPE]]] Expiry: [[[VISA_CARD_EXPIRY_DATE]]]
+--
+";
+    let prompt = parse(upl);
+    let out = PromptBuilder::new(prompt).render_with_defaults().unwrap();
+    // Both defaults are used — condition doesn't affect rendering.
+    assert!(out.contains("Card: visa"));
+    assert!(out.contains("Expiry: 12/25"));
+}
+
+#[test]
+fn integration_condition_render_with_explicit_values() {
+    let upl = "\
+--
+name: p
+params:
+  credit_card_type:
+    type: option_single
+    opts:
+      - \"visa\"
+      - \"mastercard\"
+    def: \"visa\"
+  visa_card_expiry_date:
+    type: string
+    exclude_condition: CREDIT_CARD_TYPE = \"visa\"
+    def: \"12/25\"
+--
+Card: [[[CREDIT_CARD_TYPE]]] Expiry: [[[VISA_CARD_EXPIRY_DATE]]]
+--
+";
+    let values = vmap(&[
+        ("credit_card_type", VariableValue::String("mastercard".into())),
+        ("visa_card_expiry_date", VariableValue::String("06/28".into())),
+    ]);
+    let out = render(upl, values);
+    assert!(out.contains("Card: mastercard"));
+    assert!(out.contains("Expiry: 06/28"));
+}
+
+#[test]
+fn integration_condition_not_operator() {
+    let upl = "\
+--
+name: p
+params:
+  flag:
+    type: boolean
+    def: true
+  other:
+    type: string
+    exclude_condition: !FLAG
+    def: \"hidden\"
+--
+Flag: [[[FLAG]]] Other: [[[OTHER]]]
+--
+";
+    let prompt = parse(upl);
+    let out = PromptBuilder::new(prompt).render_with_defaults().unwrap();
+    assert!(out.contains("Flag: true"));
+    assert!(out.contains("Other: hidden"));
+}
+
+#[test]
+fn integration_condition_with_comparison() {
+    let upl = "\
+--
+name: p
+params:
+  port:
+    type: number
+    def: 443
+  use_ssl:
+    type: boolean
+    exclude_condition: PORT != 443
+    def: false
+--
+Port: [[[PORT]]] SSL: [[[USE_SSL]]]
+--
+";
+    let prompt = parse(upl);
+    let out = PromptBuilder::new(prompt).render_with_defaults().unwrap();
+    assert!(out.contains("Port: 443"));
+    assert!(out.contains("SSL: false"));
+}
+
+#[test]
+fn integration_condition_chained_params() {
+    // Multiple parameters with conditions, each referencing earlier ones.
+    let upl = "\
+--
+name: p
+params:
+  a:
+    type: string
+    def: \"x\"
+  b:
+    type: string
+    exclude_condition: A = \"x\"
+    def: \"b_default\"
+  c:
+    type: string
+    exclude_condition: B = \"b_default\"
+    def: \"c_default\"
+--
+A=[[[A]]] B=[[[B]]] C=[[[C]]]
+--
+";
+    let prompt = parse(upl);
+    let out = PromptBuilder::new(prompt).render_with_defaults().unwrap();
+    assert_eq!(out, "A=x B=b_default C=c_default\n");
+}
+
 
