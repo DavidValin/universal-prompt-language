@@ -11,6 +11,10 @@ an `object`/field that reuses it via `type: <name>`). See §3 of the RFC for det
 
 ![preview](https://github.com/DavidValin/universal-prompt-language/raw/master/preview.gif)
 
+### How it works
+
+![diagram](https://github.com/DavidValin/universal-prompt-language/raw/master/diagram.png)
+
 This project contains:
 
 1. `upl specification`
