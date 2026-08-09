@@ -207,6 +207,8 @@ pub enum PromptParseError {
     InvalidOfieldsForType { type_name: String },
     #[error("'object_shape' variable '{name}' requires an 'ofields' block")]
     ObjectShapeMissingOfields { name: String },
+    #[error("List/option variable '{path}' has etype 'object' but no 'ofields' block; an inline object element shape must declare its fields")]
+    MissingOfieldsForObjectEtype { path: String },
     #[error("Invalid value for 'def': {value} (expected type: {expected_type:?})")]
     InvalidDefaultValue { value: String, expected_type: VariableType },
     #[error("Default for '{path}' (type {declared:?}) has wrong value kind: {value}")]
@@ -1118,6 +1120,21 @@ impl PromptParser {
             }
         }
 
+        // An inline `etype: object` (not a by-name `element_ref`) requires an
+        // `ofields` block declaring the element's fields. A by-name reference
+        // resolves `ofields_definitions` during `resolve_element_refs`; an
+        // inline object has no source to splice from, so the author must
+        // declare the fields inline. Without this check `shape_of` would
+        // panic on the missing `ofields_definitions`.
+        if def.element_type == Some(Object)
+            && def.element_ref.is_none()
+            && def.ofields_definitions.is_none()
+        {
+            return Err(PromptParseError::MissingOfieldsForObjectEtype {
+                path: path.to_string(),
+            });
+        }
+
         // Type-check the `def` value (RFC §3.3): a `def` whose `VariableValue`
         // kind does not match the declared `type`/`element_type` is a parse
         // error. Object/list `def`s are checked recursively against the
@@ -1603,20 +1620,27 @@ if let Some(label) = &def.label {
     /// `Scalar(etype)`.
     fn shape_of(def: &VariableDefinition) -> Shape<'_> {
         match def.r#type {
-            VariableType::Object | VariableType::ObjectShape => Shape::Object(
-                def.ofields_definitions
-                    .as_ref()
-                    .expect("object/object_shape has ofields after validation"),
-            ),
+            VariableType::Object | VariableType::ObjectShape => {
+                match def.ofields_definitions.as_ref() {
+                    Some(ofields) => Shape::Object(ofields),
+                    // Should not happen after validation, but avoid panicking
+                    // on partially-typed input (e.g. an incomplete `type: objec`
+                    // that was tentatively treated as an object). Field accesses
+                    // will surface a clean UnknownField error instead.
+                    None => Shape::Scalar(VariableType::String),
+                }
+            }
             VariableType::List | VariableType::OptionSingle | VariableType::OptionMulti => {
                 let is_object_etype = def.element_type == Some(VariableType::Object)
                     || def.element_ref.is_some();
                 if is_object_etype {
-                    Shape::Object(
-                        def.ofields_definitions
-                            .as_ref()
-                            .expect("object-etype variable has resolved ofields"),
-                    )
+                    match def.ofields_definitions.as_ref() {
+                        Some(ofields) => Shape::Object(ofields),
+                        // Inline `etype: object` without an `ofields` block is
+                        // caught by validate_definition; this fallback is
+                        // defensive for any edge case that slips through.
+                        None => Shape::Scalar(VariableType::String),
+                    }
                 } else {
                     Shape::Scalar(def.element_type.unwrap_or(VariableType::String))
                 }

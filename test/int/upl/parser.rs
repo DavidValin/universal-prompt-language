@@ -732,6 +732,71 @@ params:
     assert!(matches!(res, Err(PromptParseError::OptionEntryTypeMismatch { .. })));
 }
 
+#[test]
+fn test_list_inline_object_etype_without_ofields_is_error() {
+    let content = r#"--
+name: p
+params:
+  items:
+    type: list
+    etype: object
+--
+[[[ITEMS]]]
+"#;
+    let res = PromptParser::parse(content);
+    assert!(
+        matches!(res, Err(PromptParseError::MissingOfieldsForObjectEtype { .. })),
+        "inline etype: object without ofields should be a clean error, not a panic; got {res:?}"
+    );
+}
+
+#[test]
+fn test_option_multi_inline_object_etype_without_ofields_is_error() {
+    let content = r#"--
+name: p
+params:
+  items:
+    type: option_multi
+    etype: object
+    opts:
+      - {}
+      - {}
+--
+[[[ITEMS]]]
+"#;
+    let res = PromptParser::parse(content);
+    assert!(
+        matches!(res, Err(PromptParseError::MissingOfieldsForObjectEtype { .. })),
+        "option_multi with inline etype: object without ofields should be a clean error; got {res:?}"
+    );
+}
+
+#[test]
+fn test_list_inline_object_etype_with_ofields_parses() {
+    let content = r#"--
+name: p
+params:
+  items:
+    type: list
+    etype: object
+    ofields:
+      name:
+        type: string
+      qty:
+        type: number
+--
+{{{for I in ITEMS}}}- [[[I.NAME]]]: [[[I.QTY]]]
+{{{end for}}}
+"#;
+    let prompt = PromptParser::parse(content).expect("should parse");
+    let items = prompt.variable_definitions.get("items").unwrap();
+    assert_eq!(items.element_type, Some(VariableType::Object));
+    assert!(items.ofields_definitions.is_some());
+    let ofields = items.ofields_definitions.as_ref().unwrap();
+    assert!(ofields.contains_key("name"));
+    assert!(ofields.contains_key("qty"));
+}
+
 // --- `name` metadata field validation (RFC §2.1) ---
 
 #[test]
