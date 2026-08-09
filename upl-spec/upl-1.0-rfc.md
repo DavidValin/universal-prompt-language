@@ -486,66 +486,66 @@ Hello, [[[USERNAME]]]!
 A `list` variable referenced as `[[[VAR]]]` renders its elements joined with `", "`. The rendering of each element depends on its `etype`:
 
 - For scalar `etype`s (`string`, `long_string`, `number`, `boolean`), each element is rendered as its literal value (see §4.6 for value rendering rules).
-- For an `object` `etype` (declared inline with its own `ofields`, or via a referenced `object_shape` per §3.4), each element is rendered as a comma-separated list of `field: value` pairs (no enclosing braces), e.g. `host: localhost, port: 8080`. For structured output, prefer dotted-path access (§4.1.2), field projection (§4.1.5), or a `for` loop (§4.3).
+- For an `object` `etype` (declared inline with its own `ofields`, or via a referenced `object_shape` per §3.4), each element is rendered as a comma-separated list of `field: value` pairs (no enclosing braces), e.g. `name: free will, field: determinism`. For structured output, prefer dotted-path access (§4.1.2), field projection (§4.1.5), or a `for` loop (§4.3).
 
 ```text
 params:
-  tags:
+  topics:
     type: list
     etype: string
-    def: ["api", "v2", "beta"]
-  ports:
+    def: ["ethics", "logic", "metaphysics"]
+  years:
     type: list
     etype: number
-    def: [80, 443, 8080]
-  flags:
+    def: [-384, 1711, 1905]
+  debatable:
     type: list
     etype: boolean
     def: [true, false, true]
-  servers:
+  concepts:
     type: list
     etype: object
     ofields:
-      host:
+      name:
         type: string
-        def: "localhost"
-      port:
-        type: number
-        def: 8080
+        def: "free will"
+      field:
+        type: string
+        def: "determinism"
     def:
-      - { host: "localhost", port: 8080 }
-      - { host: "db.local", port: 5432 }
+      - { name: "free will", field: "determinism" }
+      - { name: "justice", field: "ethics" }
 --
-Tags:   [[[TAGS]]]
-Ports:  [[[PORTS]]]
-Flags:  [[[FLAGS]]]
-Servers: [[[SERVERS]]]
+Topics:     [[[TOPICS]]]
+Years:      [[[YEARS]]]
+Debatable:  [[[DEBATABLE]]]
+Concepts:   [[[CONCEPTS]]]
 ```
 
 renders to:
 
 ```text
-Tags:   api, v2, beta
-Ports:  80, 443, 8080
-Flags:  true, false, true
-Servers: host: localhost, port: 8080, host: db.local, port: 5432
+Topics:     ethics, logic, metaphysics
+Years:      -384, 1711, 1905
+Debatable:  true, false, true
+Concepts:   name: free will, field: determinism, name: justice, field: ethics
 ```
 
 For structured element access, iterate the list with a `for` loop (see §4.3) and use a dotted path on the loop variable to print a single field:
 
 ```text
-Hosts:
-{{{for SERVER in SERVERS}}}
-- [[[SERVER.HOST]]]
+Concepts:
+{{{for CONCEPT in CONCEPTS}}}
+- [[[CONCEPT.NAME]]]
 {{{end for}}}
 ```
 
 renders to:
 
 ```text
-Hosts:
-- localhost
-- db.local
+Concepts:
+- free will
+- justice
 ```
 
 #### 4.1.2 Object Field Access (Dotted Paths)
@@ -554,28 +554,32 @@ Fields of an `object` variable are referenced with a **dotted path** inside the 
 
 ```text
 params:
-  server:
+  theory:
     type: object
     ofields:
-      host:
+      name:
         type: string
-        def: "localhost"
-      ssl:
+        def: "determinism"
+      origin:
         type: object
         ofields:
-          enabled:
+          era:
+            type: string
+            def: "ancient"
+          contested:
             type: boolean
             def: true
 --
-Host: [[[SERVER.HOST]]]
-SSL:  [[[SERVER.SSL.ENABLED]]]
+Theory:    [[[THEORY.NAME]]]
+Origin:    [[[THEORY.ORIGIN.ERA]]]
+Contested: [[[THEORY.ORIGIN.CONTESTED]]]
 ```
 
 Dotted paths also work inside loop bodies, where the leading segment is the loop variable (see §4.3) bound to the current list element. The loop variable MUST be uppercase:
 
 ```text
-{{{for ENDPOINT in ENDPOINTS}}}
-- [[[ENDPOINT.METHOD]]] [[[ENDPOINT.PATH]]]
+{{{for ARGUMENT in ARGUMENTS}}}
+- [[[ARGUMENT.PREMISE]]] => [[[ARGUMENT.CONCLUSION]]]
 {{{end for}}}
 ```
 
@@ -896,213 +900,212 @@ The parsed body is a tree of nodes (`Template { nodes: Vec<Node> }`). A node is 
 
 ## 8. Examples
 
-### 8.1 Ask for a REST Client
+### 8.1 Ask for a Philosophical Debate Outline
 
 ```text
 --
-name: ask_rest_client
-title: Ask for a REST Client from an Endpoint List
-desc: Ask the assistant to write a Node.js fetch client for the given endpoints
+name: ask_debate_outline
+title: Ask for a Philosophical Debate Outline
+desc: Ask the assistant to outline a debate from a list of positions
 params:
-  endpoints:
+  positions:
     type: list
-    desc: List of REST endpoints the client should cover
+    desc: List of positions to include in the debate
     etype: object
     ofields:
-      method:
+      stance:
         type: option_single
-        desc: HTTP method
+        desc: Whether the position is for or against
         opts:
-          - "GET"
-          - "POST"
-          - "PUT"
-          - "DELETE"
-        def: "GET"
-      path:
+          - "for"
+          - "against"
+          - "neutral"
+        def: "for"
+      claim:
         type: string
-        desc: Endpoint path
-        def: "/api/users"
-      body:
+        desc: The claim being argued
+        def: "free will exists"
+      reasoning:
         type: long_string
-        desc: Request body (if any)
-        def: "{}"
-      headers:
+        desc: Supporting reasoning (if any)
+        def: "none"
+      sources:
         type: object
-        desc: Custom headers
+        desc: Source attribution
         ofields:
-          content-type:
+          author:
             type: string
-            def: "application/json"
-          authorization:
+            def: "anonymous"
+          year:
             type: string
-            def: ""
+            def: "unknown"
         def: {}
-  include_auth:
+  include_counterpoints:
     type: boolean
-    desc: Whether an auth header should be required
+    desc: Whether counterpoints should be requested for each position
     def: true
 --
-Please write a Node.js client that calls the following endpoints using fetch:
+Please write a debate outline covering the following positions:
 
-{{{for ENDPOINT in ENDPOINTS}}}
-- [[[ENDPOINT.METHOD]]] [[[ENDPOINT.PATH]]] (body: [[[ENDPOINT.BODY]]])
-{{{if INCLUDE_AUTH}}}
-  Note: this endpoint must send an Authorization header.
+{{{for POSITION in POSITIONS}}}
+- [[[POSITION.STANCE]]] [[[POSITION.CLAIM]]] (reasoning: [[[POSITION.REASONING]]])
+{{{if INCLUDE_COUNTERPOINTS}}}
+  Note: provide a counterpoint to this position.
 {{{end if}}}
-{{{if ENDPOINT.BODY != "{}"}}}
-  Note: this endpoint expects a request body.
+{{{if POSITION.REASONING != "none"}}}
+  Note: this position includes explicit reasoning.
 {{{end if}}}
 {{{end for}}}
 
-Explain how the client should handle errors and retries for each call.
+Explain how each position relates to the central question.
 --
 ```
 
-### 8.2 Ask for File Handling Advice
+### 8.2 Ask for a Study Plan
 
 ```text
 --
-name: ask_file_handling
-title: Ask for File Handling Advice
-desc: Ask the assistant how to handle a file based on its type and size
+name: ask_study_plan
+title: Ask for a Study Plan
+desc: Ask the assistant to recommend a study plan for a given subject
 params:
-  file_type:
+  subject:
     type: option_single
-    desc: Type of file (JS, JSON, HTML)
+    desc: Subject to study (ethics, logic, metaphysics)
     opts:
-      - "js"
-      - "json"
-      - "html"
-    def: "js"
-  file_size:
+      - "ethics"
+      - "logic"
+      - "metaphysics"
+    def: "ethics"
+  hours:
     type: number
-    desc: Size in KB
-    def: 100
-  use_async:
+    desc: Hours available per week
+    def: 5
+  prefer_grounded:
     type: boolean
-    desc: Whether the caller prefers async/await
+    desc: Whether the caller prefers historically grounded material
     def: true
 --
-I have a [[[FILE_TYPE]]] file of roughly [[[FILE_SIZE]]] KB.
+I want to study [[[SUBJECT]]] and have about [[[HOURS]]] hours per week.
 
-{{{FILE_SIZE > 100 ? "It is a large file, so memory usage matters." : "It is a small file, so simplicity matters."}}}
+{{{HOURS > 10 ? "I have ample time, so a deep, structured curriculum matters." : "I have limited time, so focus and prioritization matter."}}}
 
-{{{USE_ASYNC ? "Please recommend an async/await approach." : "Please recommend a synchronous approach."}}}
+{{{PREFER_GROUNDED ? "Please ground the plan in primary sources." : "Please use accessible modern overviews."}}}
 
-Describe the best way to read and process this file in Node.js, and explain why.
+Describe the best way to approach this subject and explain why.
 --
 ```
 
-### 8.3 Ask for an API Configuration Review
+### 8.3 Ask for a Theoretical Framework Review
 
 ```text
 --
-name: ask_api_config_review
-title: Ask for an API Configuration Review
-desc: Ask the assistant to review and explain an API client configuration
+name: ask_theory_review
+title: Ask for a Theoretical Framework Review
+desc: Ask the assistant to review and explain a theoretical framework
 params:
-  api_config:
+  framework:
     type: object
-    desc: Full API configuration to review
+    desc: Full theoretical framework to review
     ofields:
-      base_url:
+      domain:
         type: string
-        desc: Base URL of the API
-        def: "https://api.example.com"
-      timeout:
+        desc: Domain of inquiry
+        def: "epistemology"
+      influence:
         type: number
-        desc: Request timeout in seconds
-        def: 30
-      auth:
+        desc: Estimated influence score (0-100)
+        def: 75
+      origin:
         type: object
-        desc: Authentication config
+        desc: Origin details
         ofields:
-          type:
+          tradition:
             type: option_single
             opts:
-              - "bearer"
-              - "basic"
-              - "none"
-            def: "bearer"
-          token:
+              - "rationalist"
+              - "empiricist"
+              - "pragmatist"
+            def: "rationalist"
+          founder:
             type: string
-            desc: Bearer token
-            def: "my-secret-token"
-          username:
+            desc: Principal founder
+            def: "Descartes"
+          era:
             type: string
-            def: "admin"
-          password:
+            def: "17th century"
+          rival:
             type: string
-            def: "secret"
-      retry:
+            def: "Locke"
+      scope:
         type: object
-        desc: Retry strategy
+        desc: Scope of application
         ofields:
-          max_attempts:
+          breadth:
             type: number
             def: 3
-          delay_ms:
+          depth:
             type: number
-            def: 1000
-        def: { max_attempts: 3, delay_ms: 1000 }
+            def: 5
+        def: { breadth: 3, depth: 5 }
 --
-Please review the following API configuration and tell me whether it is safe and sensible:
+Please review the following theoretical framework and tell me whether it is sound and well-scoped:
 
-- Base URL: [[[API_CONFIG.BASE_URL]]]
-- Timeout (seconds): [[[API_CONFIG.TIMEOUT]]]
-- Auth type: [[[API_CONFIG.AUTH.TYPE]]]
-- Auth username: [[[API_CONFIG.AUTH.USERNAME]]]
-- Retry max attempts: [[[API_CONFIG.RETRY.MAX_ATTEMPTS]]]
-- Retry delay (ms): [[[API_CONFIG.RETRY.DELAY_MS]]]
+- Domain: [[[FRAMEWORK.DOMAIN]]]
+- Influence (0-100): [[[FRAMEWORK.INFLUENCE]]]
+- Tradition: [[[FRAMEWORK.ORIGIN.TRADITION]]]
+- Founder: [[[FRAMEWORK.ORIGIN.FOUNDER]]]
+- Scope breadth: [[[FRAMEWORK.SCOPE.BREADTH]]]
+- Scope depth: [[[FRAMEWORK.SCOPE.DEPTH]]]
 
-Point out any security issues (for example, hardcoded credentials) and suggest improvements.
+Point out any weaknesses (for example, overreach beyond its domain) and suggest improvements.
 --
 ```
 
-### 8.4 Ask for a Server Inventory (object_shape reuse)
+### 8.4 Ask for a Philosopher Roster (object_shape reuse)
 
 This example shows the difference between `object` (asked to the user) and
-`object_shape` (a reusable shape, never asked on its own). `host` is an
-`object_shape` reused by the `servers` list and by the `primary` object
-(via `type: host`).
+`object_shape` (a reusable shape, never asked on its own). `philosopher` is an
+`object_shape` reused by the `thinkers` list and by the `focal` object
+(via `type: philosopher`).
 
 ```text
 --
-name: ask_server_inventory
-title: Ask for a Server Inventory
-desc: Collect a list of servers plus a primary server, all sharing one shape
+name: ask_philosopher_roster
+title: Ask for a Philosopher Roster
+desc: Collect a list of philosophers plus a focal philosopher, all sharing one shape
 params:
-  host:
+  philosopher:
     type: object_shape
     ofields:
       name:
         type: string
-        def: "localhost"
-      port:
+        def: "Socrates"
+      era:
         type: number
-        def: 8080
-  servers:
+        def: -470
+  thinkers:
     type: list
-    etype: host
+    etype: philosopher
     def:
-      - { name: "web", port: 80 }
-      - { name: "db", port: 5432 }
-  primary:
-    type: host
-    def: { name: "web", port: 80 }
+      - { name: "Plato", era: -428 }
+      - { name: "Aristotle", era: -384 }
+  focal:
+    type: philosopher
+    def: { name: "Plato", era: -428 }
 --
-Primary: [[[PRIMARY.NAME]]]:[[[PRIMARY.PORT]]]
+Focal: [[[FOCAL.NAME]]] (b. [[[FOCAL.ERA]]])
 All:
-{{{for S in SERVERS}}}
-- [[[S.NAME]]]:[[[S.PORT]]]
+{{{for P in THINKERS}}}
+- [[[P.NAME]]] (b. [[[P.ERA]]])
 {{{end for}}}
 --
 ```
 
-At build time the builder prompts for `servers` (a list whose each item is
-collected using the `host` object_shape shape) and for `primary` (an object
-reusing the `host` shape via `type: host`). It never prompts for `host` on
-its own.
+At build time the builder prompts for `thinkers` (a list whose each item is
+collected using the `philosopher` object_shape shape) and for `focal` (an object
+reusing the `philosopher` shape via `type: philosopher`). It never prompts for
+`philosopher` on its own.
 
 ---
 
