@@ -1,0 +1,123 @@
+--
+name: marketing_campaign
+title: Marketing Campaign Strategy
+desc: Build a complete marketing campaign strategy for a product or service, covering channels, messaging, audience segments, and KPIs.
+params:
+  product:
+    type: string
+    desc: The product or service to market
+    def: "a subscription-based meal kit delivery service"
+  goal:
+    type: option_single
+    desc: The primary campaign goal
+    opts:
+      - "brand_awareness"
+      - "lead_generation"
+      - "customer_acquisition"
+      - "retention"
+    def: "customer_acquisition"
+  budget:
+    type: string
+    desc: Approximate budget range for the campaign
+    def: "$10,000 - $25,000"
+  duration_weeks:
+    type: number
+    desc: Campaign duration in weeks
+    def: 8
+  channels:
+    type: option_multi
+    desc: Marketing channels to consider
+    etype: string
+    opts:
+      - "social_media"
+      - "email"
+      - "content_marketing"
+      - "paid_ads"
+      - "influencer"
+      - "seo"
+      - "events"
+    def:
+      - "social_media"
+      - "paid_ads"
+      - "influencer"
+  audience_segments:
+    type: list
+    desc: Target audience segments to address
+    etype: object
+    ofields:
+      name:
+        type: string
+        desc: Segment name
+        def: "busy professionals"
+      pain_point:
+        type: string
+        desc: Primary pain point of this segment
+        def: "no time to cook healthy meals"
+      preferred_channel:
+        type: string
+        desc: Channel this segment responds to best
+        def: "social_media"
+    def:
+      - { name: "busy professionals", pain_point: "no time to cook healthy meals", preferred_channel: "social_media" }
+      - { name: "health-conscious parents", pain_point: "want nutritious family meals without planning", preferred_channel: "email" }
+  tone:
+    type: option_single
+    desc: Desired brand voice for messaging
+    opts:
+      - "energetic"
+      - "professional"
+      - "friendly"
+      - "bold"
+    def: "friendly"
+  include_kpis:
+    type: boolean
+    desc: Whether to include measurable KPIs
+    def: true
+  include_content_calendar:
+    type: boolean
+    desc: Whether to include a weekly content calendar outline
+    def: true
+--
+Create a marketing campaign strategy for [[[PRODUCT]]].
+
+Campaign goal: [[[GOAL]]]
+Budget: [[[BUDGET]]]
+Duration: [[[DURATION_WEEKS]]] weeks
+Brand voice: {{{TONE = "energetic" ? "energetic and punchy" : ""}}}{{{TONE = "professional" ? "professional and authoritative" : ""}}}{{{TONE = "friendly" ? "friendly and approachable" : ""}}}{{{TONE = "bold" ? "bold and provocative" : ""}}}.
+
+Target audience segments:
+{{{for SEGMENT in AUDIENCE_SEGMENTS}}}
+- [[[SEGMENT.NAME]]]: pain point is "[[[SEGMENT.PAIN_POINT]]]", best reached via [[[SEGMENT.PREFERRED_CHANNEL]]].
+{{{end for}}}
+
+Selected channels:
+{{{for CHANNEL in CHANNELS}}}
+- [[[CHANNEL]]]
+{{{end for}}}
+
+Structure the strategy as:
+
+1. **Campaign overview** — a 3-4 sentence summary of the campaign's core message and approach.
+2. **Channel strategy** — for each selected channel, describe:
+   - The specific tactic (e.g. ad type, content format, influencer type).
+   - Which audience segment it targets.
+   - Why this channel fits the goal.
+3. **Messaging pillars** — define 3 core messaging pillars, each with a sample headline and a one-line supporting copy.
+4. **Audience mapping** — for each segment, map the messaging pillar that best addresses its pain point and the channel to deliver it on.
+
+{{{if INCLUDE_KPIS}}}
+5. **KPIs** — list 4-6 measurable KPIs tied to the "[[[GOAL]]]" goal, each with:
+   - Metric name.
+   - Target value.
+   - How it will be measured.
+{{{end if}}}
+
+{{{if INCLUDE_CONTENT_CALENDAR}}}
+6. **Content calendar** — a week-by-week outline for [[[DURATION_WEEKS]]] weeks, each with:
+   - Theme of the week.
+   - Primary channel.
+   - One key deliverable (e.g. a post, an email, an ad set).
+{{{end if}}}
+
+Conclude with a budget allocation recommendation across the channels, expressed as percentages that sum to 100%.
+--

@@ -1,0 +1,126 @@
+--
+name: financial_plan
+title: Personal Financial Plan
+desc: Build a structured personal financial plan covering income, expenses, savings goals, debt management, and investment recommendations.
+params:
+  annual_income:
+    type: number
+    desc: Gross annual income
+    def: 75000
+  currency:
+    type: string
+    desc: Currency symbol or code
+    def: "USD"
+  monthly_fixed_expenses:
+    type: list
+    desc: Recurring monthly fixed expenses
+    etype: object
+    ofields:
+      name:
+        type: string
+        desc: Expense name
+        def: "rent"
+      amount:
+        type: number
+        desc: Monthly amount
+        def: 1500
+    def:
+      - { name: "rent", amount: 1500 }
+      - { name: "utilities", amount: 200 }
+      - { name: "insurance", amount: 300 }
+  monthly_variable_expenses:
+    type: number
+    desc: Average monthly variable spending (groceries, dining, entertainment, etc.)
+    def: 800
+  debts:
+    type: list
+    desc: Outstanding debts
+    etype: object
+    ofields:
+      name:
+        type: string
+        desc: Debt name
+        def: "student loan"
+      balance:
+        type: number
+        desc: Current balance
+        def: 20000
+      interest_rate:
+        type: number
+        desc: Annual interest rate (percentage, e.g. 5.5)
+        def: 5.5
+      min_monthly_payment:
+        type: number
+        desc: Minimum monthly payment
+        def: 250
+    def:
+      - { name: "student loan", balance: 20000, interest_rate: 5.5, min_monthly_payment: 250 }
+  savings_goal:
+    type: string
+    desc: Primary savings goal
+    def: "build a 6-month emergency fund"
+  savings_timeline_months:
+    type: number
+    desc: Target months to reach the primary savings goal
+    def: 18
+  risk_tolerance:
+    type: option_single
+    desc: Investment risk tolerance
+    opts:
+      - "conservative"
+      - "moderate"
+      - "aggressive"
+    def: "moderate"
+  include_retirement:
+    type: boolean
+    desc: Whether to include a retirement planning section
+    def: true
+  include_tax_tips:
+    type: boolean
+    desc: Whether to include general tax-efficiency tips
+    def: true
+--
+Create a personal financial plan with the following inputs:
+
+Annual income: [[[CURRENCY]]] [[[ANNUAL_INCOME]]]
+Average monthly variable expenses: [[[CURRENCY]]] [[[MONTHLY_VARIABLE_EXPENSES]]]
+
+Fixed monthly expenses:
+{{{for EXPENSE in MONTHLY_FIXED_EXPENSES}}}
+- [[[EXPENSE.NAME]]]: [[[CURRENCY]]] [[[EXPENSE.AMOUNT]]]
+{{{end for}}}
+
+Outstanding debts:
+{{{for DEBT in DEBTS}}}
+- [[[DEBT.NAME]]]: balance [[[CURRENCY]]] [[[DEBT.BALANCE]]] at [[[DEBT.INTEREST_RATE]]]% APR, minimum payment [[[CURRENCY]]] [[[DEBT.MIN_MONTHLY_PAYMENT]]]/mo
+{{{end for}}}
+
+Primary savings goal: "[[[SAVINGS_GOAL]]]" within [[[SAVINGS_TIMELINE_MONTHS]]] months.
+Risk tolerance: [[[RISK_TOLERANCE]]].
+
+Structure the plan as follows:
+
+1. **Cash flow analysis** — calculate monthly net income (annual income / 12), total monthly fixed expenses, total minimum debt payments, and the resulting monthly surplus or deficit. Show the numbers.
+
+2. **Budget recommendation** — propose a monthly budget split into:
+   - Needs (fixed + variable expenses + minimum debt payments).
+   - Savings (toward the primary goal).
+   - Wants (discretionary).
+   Express each as an amount and a percentage of monthly net income.
+
+3. **Debt payoff strategy** — recommend a payoff method (e.g. avalanche or snowball) for the listed debts and explain why. Provide a payoff order and an estimated timeline.
+
+4. **Savings plan** — calculate how much must be saved monthly to reach "[[[SAVINGS_GOAL]]]" in [[[SAVINGS_TIMELINE_MONTHS]]] months. If the monthly surplus is insufficient, suggest 2-3 adjustments.
+
+5. **Investment guidance** — given a [[[RISK_TOLERANCE]]] risk tolerance, suggest a simple portfolio allocation (percentages across asset classes) and explain the rationale in 2-3 sentences.
+
+{{{if INCLUDE_RETIREMENT}}}
+6. **Retirement planning** — recommend a retirement contribution rate as a percentage of income, suggest account types, and estimate the impact over 30 years using a reasonable assumed annual return.
+{{{end if}}}
+
+{{{if INCLUDE_TAX_TIPS}}}
+7. **Tax efficiency** — list 3-4 general tax-efficiency tips relevant to this income level and savings pattern.
+{{{end if}}}
+
+End with a one-paragraph summary of the most important action item for this person.
+--

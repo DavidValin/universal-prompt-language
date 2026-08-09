@@ -1,0 +1,135 @@
+--
+name: analyze_psychological_facts
+title: Analyze Facts Through Psychological Theories
+desc: Analyze a list of observed facts or behaviors through selected psychological theories to uncover underlying reasons, detect anomalies, and surface conflicting evidence.
+params:
+  subject:
+    type: string
+    desc: The broad subject or context the facts relate to
+    def: "workplace motivation"
+  facts:
+    type: list
+    desc: Observed facts, behaviors, or phenomena to analyze
+    etype: object
+    ofields:
+      description:
+        type: long_string
+        desc: A description of the observed fact or behavior
+        def: "Employees who received a bonus worked fewer hours the following week."
+      source:
+        type: string
+        desc: Where the observation comes from (study, personal observation, article, etc.)
+        def: "personal observation"
+      confidence:
+        type: option_single
+        desc: How confident the observer is in this fact
+        opts:
+          - "low"
+          - "medium"
+          - "high"
+        def: "medium"
+    def:
+      - { description: "Employees who received a bonus worked fewer hours the following week.", source: "personal observation", confidence: "medium" }
+      - { description: "Team members with the highest autonomy reported the lowest stress levels but also the lowest output.", source: "internal survey", confidence: "high" }
+  theories:
+    type: list
+    desc: Psychological theories to use as analytical lenses
+    etype: object
+    ofields:
+      name:
+        type: string
+        desc: Theory name
+        def: "Self-Determination Theory"
+      summary:
+        type: long_string
+        desc: A brief summary of the theory's core claims
+        def: "Intrinsic motivation is driven by autonomy, competence, and relatedness."
+    def:
+      - { name: "Self-Determination Theory", summary: "Intrinsic motivation is driven by autonomy, competence, and relatedness." }
+      - { name: "Overjustification Effect", summary: "Extrinsic rewards can undermine intrinsic motivation for an already enjoyable activity." }
+  analysis_depth:
+    type: option_single
+    desc: How deep the analysis should go
+    opts:
+      - "summary"
+      - "detailed"
+      - "exhaustive"
+    def: "detailed"
+  detect_anomalies:
+    type: boolean
+    desc: Whether to explicitly flag anomalies and contradictions
+    def: true
+  include_theoretical_gaps:
+    type: boolean
+    desc: Whether to identify facts that none of the provided theories explain
+    def: true
+  include_alternative_interpretations:
+    type: boolean
+    desc: Whether to propose alternative psychological interpretations for each fact
+    def: true
+  audience:
+    type: option_single
+    desc: Who the analysis is written for
+    opts:
+      - "general"
+      - "academic"
+      - "practitioner"
+    def: "practitioner"
+--
+Analyze the following observed facts about "[[[SUBJECT]]]" through the lens of the provided psychological theories.
+
+Observed facts:
+{{{for FACT in FACTS}}}
+- [[[FACT.DESCRIPTION]]] (source: [[[FACT.SOURCE]]], confidence: [[[FACT.CONFIDENCE]]])
+{{{end for}}}
+
+Psychological theories to apply as analytical lenses:
+{{{for THEORY in THEORIES}}}
+- [[[THEORY.NAME]]]: [[[THEORY.SUMMARY]]]
+{{{end for}}}
+
+Analysis depth: [[[ANALYSIS_DEPTH]]].
+Audience: [[[AUDIENCE]]].
+
+Structure the analysis as follows:
+
+1. **Theory summary** — for each provided theory, restate its core claims in 1-2 sentences and note which type of phenomena it best explains.
+
+2. **Fact-by-fact analysis** — for each observed fact:
+   - Quote the fact.
+   - For each provided theory, explain whether the theory **accounts for** the fact, **partially accounts for** it, or **fails to account for** it. Justify in 2-3 sentences.
+   - Rate the overall theoretical fit for this fact as "strong", "partial", or "weak".
+
+   {{{if INCLUDE_ALTERNATIVE_INTERPRETATIONS}}}
+   - **Alternative interpretation** — propose at least one alternative psychological explanation not covered by the provided theories (name the mechanism and explain in 1-2 sentences).
+   {{{end if}}}
+
+3. **Cross-fact synthesis** — group facts that share a common theoretical explanation and identify recurring patterns across the dataset. Highlight any fact that behaves differently from the rest.
+
+{{{if DETECT_ANOMALIES}}}
+4. **Anomalies and contradictions** — explicitly flag:
+   - Facts that **contradict** a theory's predictions (explain the contradiction).
+   - Facts that **contradict each other** (explain the tension and possible reasons).
+   - Facts where the confidence is "low" and the observation might be unreliable.
+   For each anomaly, suggest a follow-up question or experiment that could clarify it.
+{{{end if}}}
+
+{{{if INCLUDE_THEORETICAL_GAPS}}}
+5. **Theoretical gaps** — list any facts that none of the provided theories adequately explain. For each:
+   - The unexplained fact.
+   - What additional theory or framework might account for it.
+   - Why the existing theories fall short.
+{{{end if}}}
+
+6. **Conclusion** — summarize the overall picture: which theory best explains the majority of the facts, where the biggest gaps are, and 2-3 recommendations for further investigation.
+
+{{{if AUDIENCE = "academic"}}}
+Use formal academic language and cite relevant theoretical constructs by name.
+{{{end if}}}
+{{{if AUDIENCE = "practitioner"}}}
+Write for a practitioner: ground each insight in an actionable implication.
+{{{end if}}}
+{{{if AUDIENCE = "general"}}}
+Use plain language and avoid jargon; define any technical term the first time it appears.
+{{{end if}}}
+--

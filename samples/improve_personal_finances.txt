@@ -1,0 +1,176 @@
+--
+name: improve_personal_finances
+title: Improve Personal Finances
+desc: Analyze monthly income and expenses to produce a tailored strategy for improving financial health, covering cost reduction, savings optimization, and actionable next steps.
+params:
+  currency:
+    type: string
+    desc: Currency symbol or code
+    def: "USD"
+  monthly_income:
+    type: list
+    desc: Monthly income sources
+    etype: object
+    ofields:
+      source:
+        type: string
+        desc: Name of the income source
+        def: "salary"
+      amount:
+        type: number
+        desc: Monthly amount received
+        def: 4000
+      frequency:
+        type: option_single
+        desc: How frequently this income is received
+        opts:
+          - "monthly"
+          - "biweekly"
+          - "weekly"
+          - "irregular"
+        def: "monthly"
+    def:
+      - { source: "salary", amount: 4000, frequency: "monthly" }
+      - { source: "freelance", amount: 500, frequency: "irregular" }
+  monthly_expenses:
+    type: list
+    desc: Monthly expense entries
+    etype: object
+    ofields:
+      name:
+        type: string
+        desc: Expense name
+        def: "rent"
+      amount:
+        type: number
+        desc: Monthly amount spent
+        def: 1200
+      category:
+        type: option_single
+        desc: Expense category
+        opts:
+          - "housing"
+          - "utilities"
+          - "food"
+          - "transportation"
+          - "insurance"
+          - "debt_repayment"
+          - "subscriptions"
+          - "entertainment"
+          - "health"
+          - "education"
+          - "savings"
+          - "other"
+        def: "other"
+      is_fixed:
+        type: boolean
+        desc: Whether this expense is a fixed recurring obligation
+        def: true
+      description:
+        type: string
+        desc: A short description or note about this expense
+        def: ""
+    def:
+      - { name: "rent", amount: 1200, category: "housing", is_fixed: true, description: "1-bedroom apartment" }
+      - { name: "groceries", amount: 400, category: "food", is_fixed: false, description: "weekly supermarket runs" }
+      - { name: "car payment", amount: 350, category: "debt_repayment", is_fixed: true, description: "auto loan 4.2% APR" }
+      - { name: "streaming services", amount: 65, category: "subscriptions", is_fixed: true, description: "3 combined subscriptions" }
+      - { name: "dining out", amount: 300, category: "entertainment", is_fixed: false, description: "restaurants and coffee" }
+  savings_target_pct:
+    type: number
+    desc: Target percentage of net income to save (0-100)
+    def: 20
+  goals:
+    type: list
+    desc: Financial goals the user is working toward
+    etype: string
+    def:
+      - "build a 6-month emergency fund"
+      - "pay off the car loan early"
+  risk_tolerance:
+    type: option_single
+    desc: Risk tolerance for investment suggestions
+    opts:
+      - "conservative"
+      - "moderate"
+      - "aggressive"
+    def: "moderate"
+  include_quick_wins:
+    type: boolean
+    desc: Whether to highlight quick wins that can be acted on immediately
+    def: true
+  include_90_day_plan:
+    type: boolean
+    desc: Whether to include a 90-day action plan
+    def: true
+  include_category_breakdown:
+    type: boolean
+    desc: Whether to include a category-level spending breakdown
+    def: true
+--
+Analyze the following personal finance data and produce a strategy to improve financial health.
+
+Monthly income sources:
+{{{for INCOME in MONTHLY_INCOME}}}
+- [[[INCOME.SOURCE]]]: [[[CURRENCY]]] [[[INCOME.AMOUNT]]] ([[[INCOME.FREQUENCY]]])
+{{{end for}}}
+
+Monthly expenses:
+{{{for EXPENSE in MONTHLY_EXPENSES}}}
+- [[[EXPENSE.NAME]]]: [[[CURRENCY]]] [[[EXPENSE.AMOUNT]]] | category: [[[EXPENSE.CATEGORY]]] | fixed: [[[EXPENSE.IS_FIXED]]]{{{if EXPENSE.DESCRIPTION}}} | note: [[[EXPENSE.DESCRIPTION]]]{{{end if}}}
+{{{end for}}}
+
+Target savings rate: [[[SAVINGS_TARGET_PCT]]]% of net income.
+Risk tolerance: [[[RISK_TOLERANCE]]].
+
+Financial goals:
+{{{for GOAL in GOALS}}}
+- [[[GOAL]]]
+{{{end for}}}
+
+Structure the strategy as follows:
+
+1. **Cash flow snapshot** — calculate and present:
+   - Total monthly income (normalize biweekly/weekly/irregular income to a monthly equivalent).
+   - Total monthly expenses (split into fixed and variable).
+   - Net monthly cash flow (income minus expenses).
+   - Current effective savings rate (savings as a percentage of net income, or 0 if nothing is allocated to savings).
+
+2. **Health assessment** — rate the overall financial health as "strong", "stable", or "at-risk" based on the cash flow snapshot and the gap between the current and target savings rates. Justify the rating in 2-3 sentences.
+
+{{{if INCLUDE_CATEGORY_BREAKDOWN}}}
+3. **Category breakdown** — group expenses by category and present:
+   - Category name.
+   - Total amount and percentage of total expenses.
+   - Whether the category share is "healthy", "high", or "excessive" for a typical budget.
+   {{{end if}}}
+
+4. **Cost reduction opportunities** — identify 3-5 specific expenses that can be reduced or eliminated. For each:
+   - The expense name and current amount.
+   - Recommended action (reduce, negotiate, eliminate, or switch provider).
+   - Estimated monthly savings.
+   - Effort level (low / medium / high).
+
+5. **Savings optimization** — recommend how to allocate the freed-up cash flow across the user's financial goals. For each goal:
+   - Suggested monthly allocation.
+   - Estimated time to reach the goal.
+   - A recommended account type or vehicle (e.g. high-yield savings, index fund, extra loan payment).
+
+6. **Investment guidance** — given a [[[RISK_TOLERANCE]]] risk tolerance and the current savings gap, suggest a simple investment allocation (percentages across asset classes) for any surplus beyond the savings target. Explain the rationale in 2-3 sentences.
+
+{{{if INCLUDE_QUICK_WINS}}}
+7. **Quick wins** — list 3 actions that can be taken within 48 hours to improve the financial situation. Each:
+   - The action.
+   - Why it helps.
+   - Estimated immediate impact.
+{{{end if}}}
+
+{{{if INCLUDE_90_DAY_PLAN}}}
+8. **90-day action plan** — break the next 90 days into three 30-day phases. For each phase:
+   - Focus area.
+   - 2-3 concrete actions.
+   - A measurable milestone to hit by the end of the phase.
+{{{end if}}}
+
+Conclude with a one-paragraph summary of the single most impactful change this person should make, given their goals and current cash flow.
+--

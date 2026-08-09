@@ -1,0 +1,103 @@
+--
+name: review_contract
+title: Review a Legal Contract
+desc: Review a contract clause-by-clause, flagging risks, missing provisions, and ambiguous language, with severity ratings and suggested revisions.
+params:
+  contract_text:
+    type: long_string
+    desc: The full text of the contract to review
+    def: ""
+  contract_type:
+    type: option_single
+    desc: The type of contract
+    opts:
+      - "nda"
+      - "employment"
+      - "saas"
+      - "consulting"
+      - "vendor"
+      - "lease"
+      - "general"
+    def: "general"
+  reviewer_role:
+    type: option_single
+    desc: The perspective of the reviewer
+    opts:
+      - "business_owner"
+      - "individual"
+      - "in_house_counsel"
+      - "startup_founder"
+    def: "business_owner"
+  governing_law:
+    type: string
+    desc: The governing law jurisdiction (e.g. "California, USA")
+    def: ""
+  focus_areas:
+    type: option_multi
+    desc: Specific areas to focus the review on
+    etype: string
+    opts:
+      - "liability"
+      - "payment_terms"
+      - "termination"
+      - "ip_ownership"
+      - "confidentiality"
+      - "indemnification"
+      - "data_protection"
+    def:
+      - "liability"
+      - "payment_terms"
+      - "termination"
+  include_plain_summary:
+    type: boolean
+    desc: Whether to include a plain-language summary of the contract
+    def: true
+  include_redlines:
+    type: boolean
+    desc: Whether to suggest specific revised wording for flagged clauses
+    def: true
+  max_flags:
+    type: number
+    desc: Maximum number of issues to flag
+    def: 15
+--
+Review the following contract from the perspective of a [[[REVIEWER_ROLE]]].
+
+Contract type: [[[CONTRACT_TYPE]]]
+{{{if GOVERNING_LAW}}}
+Governing law: [[[GOVERNING_LAW]]]
+{{{end if}}}
+
+Contract text:
+"""
+[[[CONTRACT_TEXT]]]
+"""
+
+Focus the review on these areas:
+{{{for AREA in FOCUS_AREAS}}}
+- [[[AREA]]]
+{{{end for}}}
+
+Review instructions:
+
+1. Read the entire contract carefully. Identify clauses relevant to each focus area.
+
+2. Flag up to [[[MAX_FLAGS]]] issues. For each issue:
+   - **Clause** — quote the relevant clause or a short excerpt.
+   - **Category** — which focus area it falls under.
+   - **Severity** — rate as "high", "medium", or "low".
+   - **Problem** — explain the risk or ambiguity in 1-2 sentences.
+   {{{if INCLUDE_REDLINES}}}
+   - **Suggested revision** — provide specific revised wording that better protects a [[[REVIEWER_ROLE]]].
+   {{{end if}}}
+
+3. Identify any **missing provisions** that a contract of type "[[[CONTRACT_TYPE]]]" should typically contain but are absent from this text.
+
+{{{if INCLUDE_PLAIN_SUMMARY}}}
+4. **Plain-language summary** — summarize the contract in 3-5 sentences that a non-lawyer [[[REVIEWER_ROLE]]] can understand. Cover: what each party agrees to do, what happens on a breach, and how the contract ends.
+{{{end if}}}
+
+5. **Overall risk assessment** — give the contract a risk level (low / moderate / high) and list the top 3 actions the reviewer should take before signing.
+
+Disclaimer: This review is informational and does not constitute legal advice. Consult a licensed attorney in {{{if GOVERNING_LAW}}}[[[GOVERNING_LAW]]]{{{end if}}}{{{if !GOVERNING_LAW}}}the relevant jurisdiction{{{end if}}} before signing.
+--

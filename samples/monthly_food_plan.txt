@@ -1,0 +1,164 @@
+--
+name: monthly_food_plan
+title: Monthly Healthy Food Plan
+desc: Generate a detailed monthly healthy meal plan with breakfast, lunch, and dinner for each day, full ingredient lists, and a consolidated shopping plan organized by category.
+params:
+  people:
+    type: number
+    desc: Number of adults the plan should feed
+    def: 2
+  calories_per_day:
+    type: number
+    desc: Target calories per person per day
+    def: 2000
+  diet_type:
+    type: option_single
+    desc: Dietary pattern to follow
+    opts:
+      - "omnivore"
+      - "vegetarian"
+      - "vegan"
+      - "pescatarian"
+      - "keto"
+      - "mediterranean"
+      - "low_carb"
+      - "balanced"
+    def: "balanced"
+  allergies:
+    type: list
+    desc: Food allergies or intolerances to avoid
+    etype: string
+    def: []
+  disliked_foods:
+    type: list
+    desc: Foods the user dislikes and wants to avoid
+    etype: string
+    def:
+      - "cilantro"
+  budget:
+    type: option_single
+    desc: Weekly grocery budget tier per person
+    opts:
+      - "low"
+      - "medium"
+      - "high"
+    def: "medium"
+  cuisine_preferences:
+    type: list
+    desc: Preferred cuisines to draw inspiration from
+    etype: string
+    def:
+      - "mediterranean"
+      - "asian"
+      - "mexican"
+  cooking_time_limit:
+    type: option_single
+    desc: Maximum cooking time per meal
+    opts:
+      - "15min"
+      - "30min"
+      - "60min"
+      - "no_limit"
+    def: "30min"
+  prep_day:
+    type: option_single
+    desc: Preferred day for batch prep
+    opts:
+      - "sunday"
+      - "monday"
+      - "saturday"
+      - "none"
+    def: "sunday"
+  include_snacks:
+    type: boolean
+    desc: Whether to include daily snack suggestions
+    def: true
+  include_macros:
+    type: boolean
+    desc: Whether to include macro breakdown per meal
+    def: true
+  include_shopping_plan:
+    type: boolean
+    desc: Whether to include a consolidated shopping plan
+    def: true
+  shopping_plan_grouping:
+    type: option_single
+    desc: How to group the shopping list
+    opts:
+      - "category"
+      - "store_section"
+      - "week"
+    def: "category"
+  currency:
+    type: string
+    desc: Currency symbol for cost estimates
+    def: "USD"
+--
+Create a detailed monthly healthy food plan for [[[PEOPLE]]] person(s), targeting approximately [[[CALORIES_PER_DAY]]] calories per person per day.
+
+Dietary pattern: [[[DIET_TYPE]]]
+Budget tier: [[[BUDGET]]] per person per week
+Cooking time limit per meal: [[[COOKING_TIME_LIMIT]]]
+Batch prep day: [[[PREP_DAY]]]
+
+{{{if ALLERGIES}}}
+Allergies/intolerances to avoid:
+{{{for ALLERGY in ALLERGIES}}}
+- [[[ALLERGY]]]
+{{{end for}}}
+{{{end if}}}
+
+{{{if DISLIKED_FOODS}}}
+Disliked foods to avoid:
+{{{for FOOD in DISLIKED_FOODS}}}
+- [[[FOOD]]]
+{{{end for}}}
+{{{end if}}}
+
+Preferred cuisines:
+{{{for CUISINE in CUISINE_PREFERENCES}}}
+- [[[CUISINE]]]
+{{{end for}}}
+
+Structure the plan as follows:
+
+1. **Overview** — a 2-3 sentence summary of the monthly plan: the dietary approach, variety strategy, and how the plan stays within the [[[BUDGET]]] budget tier.
+
+2. **Weekly templates** — divide the month into 4 weeks. For each week, present a 7-day meal plan (Monday through Sunday). For each day present breakfast, lunch, and dinner:
+   - Meal name.
+   - 2-3 sentence description of the dish.
+   - Full ingredient list with quantities (scaled for [[[PEOPLE]]] person(s)).
+   - Approximate calories per person.
+   {{{if INCLUDE_MACROS}}}
+   - Macro breakdown per person (protein g, carbs g, fat g).
+   {{{end if}}}
+   {{{if INCLUDE_SNACKS}}}
+   - A daily snack suggestion (1-2 items with portion size).
+   {{{end if}}}
+
+   Use the preferred cuisines for variety and ensure no two consecutive days repeat the same dish. Respect the [[[COOKING_TIME_LIMIT]]] cooking time limit for each meal.
+
+3. **Batch prep guide** — {{{if PREP_DAY != "none"}}}for the [[[PREP_DAY]]] batch prep day, {{{end if}}}list 3-5 items that can be prepared in advance (e.g. cooked grains, chopped vegetables, sauces) with:
+   - What to prep.
+   - How long it keeps.
+   - Which meals across the week it serves.
+
+{{{if INCLUDE_SHOPPING_PLAN}}}
+4. **Shopping plan** — consolidate all ingredients across the 4 weeks into a single shopping list, grouped by {{{SHOPPING_PLAN_GROUPING = "category" ? "food category (produce, dairy, meat/fish, pantry, frozen, other)" : ""}}}{{{SHOPPING_PLAN_GROUPING = "store_section" ? "supermarket section (entrance/produce, dairy aisle, butcher/seafood, dry goods, frozen aisle, other)" : ""}}}{{{SHOPPING_PLAN_GROUPING = "week" ? "week (week 1, week 2, week 3, week 4)" : ""}}}.
+
+   For each group/section, list:
+   - Ingredient name.
+   - Total quantity needed for the month (scaled for [[[PEOPLE]]] person(s)).
+   - Approximate cost in [[[CURRENCY]]].
+   - Whether it is a one-time purchase or needs replenishing weekly.
+
+   End the shopping plan with:
+   - Total estimated monthly cost.
+   - Total estimated weekly cost (averaged).
+   - A note on whether this fits the [[[BUDGET]]] budget tier, and if not, 2-3 substitutions to bring it within budget.
+{{{end if}}}
+
+5. **Storage and freshness tips** — list 4-5 tips for keeping ingredients fresh throughout the month (e.g. freezing, proper containers, what to buy weekly vs monthly).
+
+End with a one-paragraph note on how this plan supports the "[[[DIET_TYPE]]]" dietary pattern and the [[[CALORIES_PER_DAY]]] calories/day target.
+--

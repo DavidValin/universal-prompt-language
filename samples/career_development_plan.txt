@@ -1,0 +1,98 @@
+--
+name: career_development_plan
+title: Career Development Plan
+desc: Build a structured career development plan for a professional, including goals, skills gaps, milestones, and a timeline.
+params:
+  current_role:
+    type: string
+    desc: The person's current job title or role
+    def: "Junior Software Engineer"
+  target_role:
+    type: string
+    desc: The role the person wants to reach
+    def: "Senior Software Engineer"
+  industry:
+    type: string
+    desc: The industry or domain
+    def: "technology"
+  years_to_target:
+    type: number
+    desc: Target number of years to reach the target role
+    def: 3
+  strengths:
+    type: list
+    desc: Current strengths and skills
+    etype: string
+    def:
+      - "writing clean code"
+      - "collaborating in teams"
+  gaps:
+    type: list
+    desc: Known skill gaps or areas to improve
+    etype: string
+    def:
+      - "system design"
+      - "public speaking"
+  priorities:
+    type: option_multi
+    desc: Areas to prioritize in the plan
+    etype: string
+    opts:
+      - "technical_skills"
+      - "leadership"
+      - "networking"
+      - "personal_branding"
+      - "work_life_balance"
+    def:
+      - "technical_skills"
+      - "leadership"
+  include_networking:
+    type: boolean
+    desc: Whether to include a networking strategy
+    def: true
+  include_mentorship:
+    type: boolean
+    desc: Whether to suggest a mentorship approach
+    def: true
+--
+Create a career development plan to help someone transition from "[[[CURRENT_ROLE]]]" to "[[[TARGET_ROLE]]]" in the [[[INDUSTRY]]] industry within [[[YEARS_TO_TARGET]]] years.
+
+Current strengths:
+{{{for STRENGTH in STRENGTHS}}}
+- [[[STRENGTH]]]
+{{{end for}}}
+
+Known skill gaps:
+{{{for GAP in GAPS}}}
+- [[[GAP]]]
+{{{end for}}}
+
+The plan should prioritize these areas:
+{{{for PRIORITY in PRIORITIES}}}
+- [[[PRIORITY]]]
+{{{end for}}}
+
+Structure the plan as follows:
+
+1. **Goal summary** — restate the transition and the timeline in one paragraph.
+2. **Skill development** — for each skill gap, provide:
+   - A concrete learning objective.
+   - Recommended resources (books, courses, projects).
+   - A practice milestone to validate the skill.
+3. **Quarterly milestones** — break the [[[YEARS_TO_TARGET]]]-year journey into quarters, each with:
+   - A focus area.
+   - 2-3 measurable goals.
+   - A success indicator.
+
+{{{if INCLUDE_NETWORKING}}}
+4. **Networking strategy** — list 3-5 specific actions to build a professional network in the [[[INDUSTRY]]] industry (events, communities, outreach templates).
+{{{end if}}}
+
+{{{if INCLUDE_MENTORSHIP}}}
+5. **Mentorship approach** — describe how to find, approach, and maintain a relationship with a mentor who is already a [[[TARGET_ROLE]]].
+{{{end if}}}
+
+6. **Risk assessment** — identify 2-3 risks that could derail the plan and a mitigation for each.
+
+End with a motivational closing statement about the journey from [[[CURRENT_ROLE]]] to [[[TARGET_ROLE]]].
+--

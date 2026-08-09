@@ -1,0 +1,137 @@
+--
+name: wellness_plan
+title: Personal Health and Wellness Plan
+desc: Build a structured health and wellness plan covering fitness, nutrition, sleep, and stress management, tailored to the person's goals and constraints.
+params:
+  primary_goal:
+    type: option_single
+    desc: The primary wellness goal
+    opts:
+      - "weight_loss"
+      - "muscle_gain"
+      - "stress_reduction"
+      - "better_sleep"
+      - "general_fitness"
+      - "energy_improvement"
+    def: "general_fitness"
+  age:
+    type: number
+    desc: Age of the person
+    def: 30
+  current_fitness_level:
+    type: option_single
+    desc: Current fitness level
+    opts:
+      - "sedentary"
+      - "lightly_active"
+      - "moderately_active"
+      - "very_active"
+    def: "lightly_active"
+  available_days_per_week:
+    type: number
+    desc: Days per week available for exercise
+    def: 4
+  minutes_per_session:
+    type: number
+    desc: Minutes available per exercise session
+    def: 45
+  equipment:
+    type: option_multi
+    desc: Available equipment
+    etype: string
+    opts:
+      - "bodyweight_only"
+      - "dumbbells"
+      - "barbell"
+      - "resistance_bands"
+      - "gym_membership"
+      - "kettlebell"
+      - "cardio_machine"
+    def:
+      - "bodyweight_only"
+      - "dumbbells"
+  dietary_preferences:
+    type: list
+    desc: Dietary preferences or restrictions
+    etype: string
+    def:
+      - "vegetarian"
+  sleep_hours_current:
+    type: number
+    desc: Current average hours of sleep per night
+    def: 6.5
+  sleep_hours_target:
+    type: number
+    desc: Target hours of sleep per night
+    def: 8
+  stress_level:
+    type: option_single
+    desc: Current self-reported stress level
+    opts:
+      - "low"
+      - "moderate"
+      - "high"
+    def: "moderate"
+  include_meal_plan:
+    type: boolean
+    desc: Whether to include a sample meal plan
+    def: true
+  include_habit_tracker:
+    type: boolean
+    desc: Whether to include a weekly habit tracker template
+    def: true
+  weeks:
+    type: number
+    desc: Number of weeks the plan should cover
+    def: 8
+--
+Create a [[[WEEKS]]]-week health and wellness plan for a [[[AGE]]]-year-old person whose primary goal is "[[[PRIMARY_GOAL]]]".
+
+Current fitness level: [[[CURRENT_FITNESS_LEVEL]]]
+Available for exercise: [[[AVAILABLE_DAYS_PER_WEEK]]] days/week, [[[MINUTES_PER_SESSION]]] minutes/session.
+Current sleep: [[[SLEEP_HOURS_CURRENT]]] hrs/night → target: [[[SLEEP_HOURS_TARGET]]] hrs/night.
+Stress level: [[[STRESS_LEVEL]]].
+
+Available equipment:
+{{{for ITEM in EQUIPMENT}}}
+- [[[ITEM]]]
+{{{end for}}}
+
+Dietary preferences/restrictions:
+{{{for PREF in DIETARY_PREFERENCES}}}
+- [[[PREF]]]
+{{{end for}}}
+
+Structure the plan as follows:
+
+1. **Goal assessment** — restate the primary goal ("[[[PRIMARY_GOAL]]]") and define 2-3 measurable success metrics (e.g. weight, reps, sleep quality score).
+
+2. **Fitness plan** — create a weekly workout schedule for [[[AVAILABLE_DAYS_PER_WEEK]]] days, each session [[[MINUTES_PER_SESSION]]] minutes long. For each day:
+   - Day of the week.
+   - Workout type (strength, cardio, mobility, rest/recovery).
+   - 3-5 specific exercises with sets and reps, using only the available equipment.
+
+{{{if INCLUDE_MEAL_PLAN}}}
+3. **Nutrition guidance** — provide a sample day meal plan (breakfast, lunch, dinner, snack) that respects the dietary preferences. For each meal:
+   - Meal name and a short description.
+   - Approximate calories and protein.
+   Then list 3 general nutrition principles to follow throughout the plan.
+{{{end if}}}
+
+4. **Sleep improvement** — provide 4-5 actionable sleep hygiene steps to move from [[[SLEEP_HOURS_CURRENT]]] to [[[SLEEP_HOURS_TARGET]]] hours per night. Calibrate the steps to a [[[STRESS_LEVEL]]] stress level.
+
+5. **Stress management** — recommend 3 stress-reduction techniques appropriate for someone with a [[[STRESS_LEVEL]]] stress level. For each:
+   - Technique name.
+   - How to practice it (2-3 sentences).
+   - Recommended frequency.
+
+{{{if INCLUDE_HABIT_TRACKER}}}
+6. **Weekly habit tracker** — create a checklist of 5-7 daily habits to track across the [[[WEEKS]]] weeks. Present it as a table header with the habits and 7 day columns.
+{{{end if}}}
+
+7. **Progression plan** — describe how to progressively increase the difficulty of the fitness plan every 2 weeks across the [[[WEEKS]]]-week period.
+
+End with a one-paragraph motivational message that ties the fitness, nutrition, sleep, and stress components together.
+
+Disclaimer: This plan is informational and not a substitute for professional medical advice. Consult a healthcare provider before starting a new exercise or nutrition program.
+--

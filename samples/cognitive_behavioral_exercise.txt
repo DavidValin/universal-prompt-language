@@ -1,0 +1,127 @@
+--
+name: cognitive_behavioral_exercise
+title: Cognitive Behavioral Therapy Exercise
+desc: Generate a structured CBT-style exercise to help reframe negative thought patterns, including thought records, cognitive distortions, and alternative perspectives.
+params:
+  situation:
+    type: long_string
+    desc: The situation that triggered the negative thoughts
+    def: "My manager gave me critical feedback on a project I worked hard on."
+  automatic_thoughts:
+    type: list
+    desc: The automatic negative thoughts that arose in the situation
+    etype: string
+    def:
+      - "I am terrible at my job"
+      - "My manager thinks I am incompetent"
+      - "I will never succeed at this"
+  emotions:
+    type: list
+    desc: Emotions experienced and their intensity (0-100)
+    etype: object
+    ofields:
+      name:
+        type: string
+        desc: Emotion name
+        def: "anxiety"
+      intensity:
+        type: number
+        desc: Intensity rating 0-100
+        def: 80
+    def:
+      - { name: "anxiety", intensity: 80 }
+      - { name: "shame", intensity: 65 }
+  distortions_to_check:
+    type: option_multi
+    desc: Cognitive distortions to screen for
+    etype: string
+    opts:
+      - "all_or_nothing_thinking"
+      - "overgeneralization"
+      - "mental_filter"
+      - "disqualifying_the_positive"
+      - "jumping_to_conclusions"
+      - "magnification"
+      - "emotional_reasoning"
+      - "should_statements"
+      - "labeling"
+      - "personalization"
+    def:
+      - "all_or_nothing_thinking"
+      - "overgeneralization"
+      - "jumping_to_conclusions"
+      - "emotional_reasoning"
+  include_behavioral_experiment:
+    type: boolean
+    desc: Whether to include a behavioral experiment to test the alternative thoughts
+    def: true
+  include_coping_cards:
+    type: boolean
+    desc: Whether to generate coping cards for future use
+    def: true
+  tone:
+    type: option_single
+    desc: Tone of the exercise
+    opts:
+      - "clinical"
+      - "warm"
+      - "neutral"
+    def: "warm"
+--
+Create a cognitive behavioral therapy (CBT) exercise to help reframe the negative thoughts described below. Use a {{{TONE = "clinical" ? "clinical and structured" : ""}}}{{{TONE = "warm" ? "warm and supportive" : ""}}}{{{TONE = "neutral" ? "neutral and clear" : ""}}} tone.
+
+Triggering situation:
+"""
+[[[SITUATION]]]
+"""
+
+Automatic negative thoughts:
+{{{for THOUGHT in AUTOMATIC_THOUGHTS}}}
+- [[[THOUGHT]]]
+{{{end for}}}
+
+Emotions experienced:
+{{{for EMOTION in EMOTIONS}}}
+- [[[EMOTION.NAME]]] (intensity: [[[EMOTION.INTENSITY]]]/100)
+{{{end for}}}
+
+Structure the exercise as follows:
+
+1. **Thought record** — for each automatic thought, complete a thought record row:
+   - The automatic thought (quoted).
+   - Evidence that **supports** the thought (2-3 items).
+   - evidence that **contradicts** the thought (2-3 items).
+   - A balanced, alternative thought that is more realistic and compassionate.
+
+2. **Cognitive distortion check** — screen each automatic thought against the following distortions:
+{{{for DISTORTION in DISTORTIONS_TO_CHECK}}}
+- [[[DISTORTION]]]
+{{{end for}}}
+   For each thought, identify which distortions are present and explain in one sentence why the distortion fits.
+
+3. **Emotion re-rating** — after reframing, estimate how the intensity of each emotion might shift. Present:
+   - Emotion name.
+   - Before intensity.
+   - After intensity (predicted).
+   - One sentence on why the shift is expected.
+
+{{{if INCLUDE_BEHAVIORAL_EXPERIMENT}}}
+4. **Behavioral experiment** — design a small, safe experiment to test the alternative thoughts. Include:
+   - The prediction being tested (what the person believes will happen).
+   - The alternative prediction (what the reframed thought suggests).
+   - The experiment (a specific, actionable step).
+   - How to measure the outcome.
+   - What the person would conclude if either prediction is confirmed.
+{{{end if}}}
+
+{{{if INCLUDE_COPING_CARDS}}}
+5. **Coping cards** — generate 3 portable coping cards the person can reference when similar thoughts arise. Each card:
+   - A short trigger description (when to use this card).
+   - The balanced alternative thought (one sentence).
+   - A one-line reminder or grounding statement.
+{{{end if}}}
+
+End with a brief closing that validates the difficulty of the situation and encourages continued practice.
+
+Disclaimer: This exercise is an educational CBT-style tool and is not a substitute for professional mental health treatment. If distress is severe or persistent, please consult a licensed therapist or psychologist.
+--

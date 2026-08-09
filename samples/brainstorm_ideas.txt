@@ -1,0 +1,76 @@
+--
+name: brainstorm_ideas
+title: Brainstorm Creative Ideas
+desc: Generate a structured brainstorm of original ideas for any topic, with optional constraints, tone, and divergent-thinking techniques.
+params:
+  topic:
+    type: string
+    desc: The topic or problem to brainstorm ideas for
+    def: "a mobile app that helps reduce food waste"
+  count:
+    type: number
+    desc: Number of ideas to generate
+    def: 10
+  tone:
+    type: option_single
+    desc: Desired tone of the ideas
+    opts:
+      - "practical"
+      - "wild"
+      - "balanced"
+    def: "balanced"
+  target_audience:
+    type: string
+    desc: The audience or end-user the ideas should serve
+    def: "consumers"
+  constraints:
+    type: list
+    desc: Constraints the ideas must respect
+    etype: string
+    def: []
+  techniques:
+    type: option_multi
+    desc: Divergent-thinking techniques to apply
+    etype: string
+    opts:
+      - "scamper"
+      - "first_principles"
+      - "analogy"
+      - "inversion"
+      - "combination"
+    def:
+      - "scamper"
+      - "analogy"
+  include_evaluation:
+    type: boolean
+    desc: Whether to include a brief evaluation of each idea
+    def: true
+--
+Generate [[[COUNT]]] original, creative ideas for the following topic:
+
+Topic: "[[[TOPIC]]]"
+Target audience: [[[TARGET_AUDIENCE]]]
+Tone: {{{TONE = "practical" ? "practical and actionable" : ""}}}{{{TONE = "wild" ? "wild and unconventional — push boundaries" : ""}}}{{{TONE = "balanced" ? "a balance of practical and unconventional" : ""}}}.
+
+{{{if CONSTRAINTS}}}
+Constraints the ideas must respect:
+{{{for CONSTRAINT in CONSTRAINTS}}}
+- [[[CONSTRAINT]]]
+{{{end for}}}
+{{{end if}}}
+
+Apply these divergent-thinking techniques:
+{{{for TECHNIQUE in TECHNIQUES}}}
+- [[[TECHNIQUE]]]
+{{{end for}}}
+
+For each idea:
+1. A short, memorable title.
+2. A 2-3 sentence description of the concept.
+3. What makes it different from the obvious approach.
+{{{if INCLUDE_EVALUATION}}}
+4. A one-line evaluation: feasibility (low/medium/high) and novelty (low/medium/high).
+{{{end if}}}
+
+After listing all ideas, identify the strongest one and explain in 2-3 sentences why it stands out given the topic and constraints.
+--
