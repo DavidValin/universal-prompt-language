@@ -46,6 +46,23 @@ make release
 sudo make install
 ```
 
+## UPL home directory
+
+UPL stores its library, configuration, and repository data under a single
+per-user folder referred to throughout this README as `~/.upl`. The actual
+location depends on your operating system:
+
+| OS | Path |
+|---|---|
+| Linux | `~/.upl` (`/home/<user>/.upl`) |
+| macOS | `~/.upl` (`/Users/<user>/.upl`) |
+| Windows | `%USERPROFILE%\.upl` (typically `C:\Users\<user>\.upl`) |
+
+The home directory is resolved in this order: the `HOME` environment
+variable (POSIX, and Git Bash / WSL on Windows), then `USERPROFILE`
+(canonical Windows home), then `HOMEDRIVE` + `HOMEPATH` (Windows
+fallback). The `.upl` subfolder name is the same on every platform.
+
 ## First-run setup
 
 On its very first run `upl` checks for the user library at `~/.upl`. If that

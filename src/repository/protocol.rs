@@ -24,10 +24,32 @@ pub const MAX_PROMPT_BYTES: usize = 20 * 1024 * 1024; // 20 MB
 // Paths
 // ---------------------------------------------------------------------------
 
+/// Resolve the user's home directory in a cross-platform way.
+///
+/// Order of preference:
+///   1. `HOME`            — POSIX (Linux/macOS) and also Git Bash / WSL on Windows.
+///   2. `USERPROFILE`     — canonical Windows home (`C:\Users\<name>`).
+///   3. `HOMEDRIVE` + `HOMEPATH` — Windows fallback (e.g. `C:` + `\Users\<name>`).
 fn home_dir() -> io::Result<PathBuf> {
-    std::env::var("HOME")
-        .map(PathBuf::from)
-        .map_err(|_| io::Error::new(io::ErrorKind::NotFound, "HOME not set"))
+    if let Ok(home) = std::env::var("HOME") {
+        if !home.is_empty() {
+            return Ok(PathBuf::from(home));
+        }
+    }
+    if let Ok(home) = std::env::var("USERPROFILE") {
+        if !home.is_empty() {
+            return Ok(PathBuf::from(home));
+        }
+    }
+    let homedrive = std::env::var("HOMEDRIVE").unwrap_or_default();
+    let homepath = std::env::var("HOMEPATH").unwrap_or_default();
+    if !homedrive.is_empty() && !homepath.is_empty() {
+        return Ok(PathBuf::from(format!("{homedrive}{homepath}")));
+    }
+    Err(io::Error::new(
+        io::ErrorKind::NotFound,
+        "home directory not set (HOME / USERPROFILE / HOMEDRIVE+HOMEPATH)",
+    ))
 }
 
 /// `~/.upl`

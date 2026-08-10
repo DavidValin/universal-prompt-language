@@ -18,6 +18,8 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
 
+use crate::repository::protocol::upl_home;
+
 use crossterm::{
     cursor,
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
@@ -249,18 +251,12 @@ impl HistoryContext {
 // ---------------------------------------------------------------------------
 
 fn history_path() -> io::Result<PathBuf> {
-    let home = std::env::var("HOME").map_err(|_| {
-        io::Error::new(io::ErrorKind::NotFound, "HOME not set")
-    })?;
-    Ok(PathBuf::from(home).join(".upl").join("build_history.json"))
+    Ok(upl_home()?.join("build_history.json"))
 }
 
 /// Directory where exported build records are written.
 fn build_exports_dir() -> io::Result<PathBuf> {
-    let home = std::env::var("HOME").map_err(|_| {
-        io::Error::new(io::ErrorKind::NotFound, "HOME not set")
-    })?;
-    Ok(PathBuf::from(home).join(".upl").join("build_exports"))
+    Ok(upl_home()?.join("build_exports"))
 }
 
 /// Generate a UUID v4-style string (random hex, formatted as

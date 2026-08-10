@@ -31,7 +31,9 @@
 // INVALID (unparsable) or has no valid `name`.
 
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
+
+use crate::repository::protocol::prompts_dir;
 
 use crossterm::{
     cursor,
@@ -530,10 +532,7 @@ impl Editor {
             self.message = "no `name` field: cannot save".to_string();
             return Ok(());
         };
-        let home = std::env::var("HOME").map_err(|_| {
-            EditorError::Save("HOME not set".to_string())
-        })?;
-        let dir = PathBuf::from(home).join(".upl").join("prompts");
+        let dir = prompts_dir()?;
         std::fs::create_dir_all(&dir).map_err(EditorError::Io)?;
         let fname = sanitize_filename(&format!("{name}.txt"));
         let path = dir.join(&fname);

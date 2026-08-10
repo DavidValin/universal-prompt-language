@@ -19,12 +19,17 @@ static INIT: Once = Once::new();
 
 /// Set `HOME` to a temp dir and create the rep/cred dirs. Runs once per
 /// process (the first test to call it wins; subsequent calls are no-ops).
+/// On Windows `USERPROFILE` is also pointed at the same dir, since that is
+/// the canonical home-location env var there.
 fn setup_home() {
     INIT.call_once(|| {
         let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("upl-rep-test");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         std::env::set_var("HOME", &dir);
+        if cfg!(windows) {
+            std::env::set_var("USERPROFILE", &dir);
+        }
         fs::create_dir_all(protocol::cred_dir().unwrap()).unwrap();
         fs::create_dir_all(protocol::rep_dir().unwrap()).unwrap();
     });

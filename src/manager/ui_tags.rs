@@ -29,6 +29,8 @@ use serde::{Deserialize, Serialize};
 
 use thiserror::Error;
 
+use crate::repository::protocol::upl_home;
+
 #[derive(Error, Debug)]
 pub enum TagsError {
     #[error("io: {0}")]
@@ -173,10 +175,7 @@ impl TagStore {
 
 /// Resolve the tags_db file path (`~/.upl/tags_db`).
 pub fn db_path() -> Result<PathBuf, TagsError> {
-    let home = std::env::var("HOME").map_err(|_| {
-        TagsError::Io(io::Error::new(io::ErrorKind::NotFound, "HOME not set"))
-    })?;
-    Ok(PathBuf::from(home).join(".upl").join("tags_db"))
+    Ok(upl_home()?.join("tags_db"))
 }
 
 /// Compute the sha256 of a prompt file's contents, as a lowercase hex string.

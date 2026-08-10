@@ -30,6 +30,7 @@ use crate::upl::parser::{Prompt, PromptParser};
 use crate::manager::build_history::{self, BuildHistory, BuildRecord, SidebarOutcome};
 use crate::manager::{ui_prompt_tags, ui_tags};
 use crate::editor::ui_prompt_editor;
+use crate::repository::protocol::prompts_dir;
 
 #[derive(Error, Debug)]
 pub enum ListError {
@@ -81,10 +82,7 @@ pub fn resolve_folder(folder: Option<&str>) -> Result<PathBuf, ListError> {
     if let Some(f) = folder {
         return Ok(PathBuf::from(f));
     }
-    let home = std::env::var("HOME").map_err(|_| {
-        ListError::Io(io::Error::new(io::ErrorKind::NotFound, "HOME not set"))
-    })?;
-    Ok(PathBuf::from(home).join(".upl").join("prompts"))
+    Ok(prompts_dir()?)
 }
 
 /// Collect every `.txt` or `.upl` file in `folder` (recursively), parse each,
