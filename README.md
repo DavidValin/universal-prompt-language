@@ -128,6 +128,18 @@ or to browse+build in one go and pass the built prompt:
 upl | aichat
 ```
 
+or
+
+```bash
+upl | claude
+```
+
+or
+
+```bash
+upl | opencode
+```
+
 ## Build a prompt from a JSON file
 
 Build a prompt non-interactively by supplying parameter values in a JSON file.
