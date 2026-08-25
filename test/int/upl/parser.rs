@@ -1328,6 +1328,192 @@ Port: [[[PORT]]] SSL: [[[USE_SSL]]]
     assert!(vd.exclude_condition.is_some());
 }
 
+// --- Static `contains`/`starts_with`/`ends_with` operand-type checks ---
+//
+// These apply to prompt-body conditions (ternary/if), which are validated by
+// `PromptParser::parse` -> `validate_body_references` -> `validate_cond`,
+// against the declared `params` types (RFC §5). They deliberately do NOT
+// apply to `exclude_condition` — that's validated by the separate,
+// Shape-unaware `validate_conditions` (name/order checks only).
+
+#[test]
+fn test_contains_static_check_list_left_rejects_list_right() {
+    let content = r#"--
+name: p
+params:
+  a:
+    type: list
+    etype: number
+    def: [1, 2]
+  b:
+    type: list
+    etype: number
+    def: [1]
+--
+{{{A contains B ? "yes" : "no"}}}
+"#;
+    let res = PromptParser::parse(content);
+    assert!(
+        matches!(res, Err(PromptParseError::ConditionOperatorTypeError { .. })),
+        "{:?}",
+        res
+    );
+}
+
+#[test]
+fn test_contains_static_check_string_left_rejects_list_right() {
+    // A list on the right does NOT fall back to membership testing when the
+    // left operand is a string — only a list on the LEFT does that.
+    let content = r#"--
+name: p
+params:
+  text:
+    type: string
+    def: "hello world"
+  items:
+    type: list
+    etype: string
+    def: ["a", "b"]
+--
+{{{TEXT contains ITEMS ? "yes" : "no"}}}
+"#;
+    let res = PromptParser::parse(content);
+    assert!(
+        matches!(res, Err(PromptParseError::ConditionOperatorTypeError { .. })),
+        "{:?}",
+        res
+    );
+}
+
+#[test]
+fn test_contains_static_check_rejects_non_list_non_string_left() {
+    let content = r#"--
+name: p
+params:
+  n:
+    type: number
+    def: 5
+--
+{{{N contains "x" ? "yes" : "no"}}}
+"#;
+    let res = PromptParser::parse(content);
+    assert!(
+        matches!(res, Err(PromptParseError::ConditionOperatorTypeError { .. })),
+        "{:?}",
+        res
+    );
+}
+
+#[test]
+fn test_starts_with_static_check_rejects_non_string_right() {
+    let content = r#"--
+name: p
+params:
+  path:
+    type: string
+    def: "/home/me"
+  n:
+    type: number
+    def: 5
+--
+{{{PATH starts_with N ? "yes" : "no"}}}
+"#;
+    let res = PromptParser::parse(content);
+    assert!(
+        matches!(res, Err(PromptParseError::ConditionOperatorTypeError { .. })),
+        "{:?}",
+        res
+    );
+}
+
+#[test]
+fn test_contains_static_check_valid_cases_parse() {
+    let content = r#"--
+name: p
+params:
+  tags:
+    type: list
+    etype: string
+    def: ["api", "web"]
+  text:
+    type: string
+    def: "hello world"
+--
+{{{TAGS contains "api" ? "yes" : "no"}}} {{{TEXT contains "hello" ? "yes" : "no"}}}
+"#;
+    assert!(PromptParser::parse(content).is_ok());
+}
+
+#[test]
+fn test_contains_static_check_allows_operand_of_unknown_type() {
+    // A reference to an undeclared root variable is tolerated at parse time
+    // (RFC §3.5: its value, and so its type, may be supplied only at render
+    // time), so the static check must not flag it.
+    let content = r#"--
+name: p
+params:
+  tags:
+    type: list
+    etype: string
+    def: ["api", "web"]
+--
+{{{TAGS contains NEEDLE ? "yes" : "no"}}}
+"#;
+    assert!(PromptParser::parse(content).is_ok());
+}
+
+#[test]
+fn test_contains_static_check_resolves_dotted_object_field_as_list() {
+    // A `list`-typed field nested inside an object must be recognized as a
+    // list for the static check, not collapsed to its element type (which is
+    // what the field's `Shape` alone would give).
+    let content = r#"--
+name: p
+params:
+  model:
+    type: object
+    ofields:
+      tags:
+        type: list
+        etype: string
+        def: ["x"]
+    def: {}
+--
+{{{MODEL.TAGS contains "x" ? "yes" : "no"}}}
+"#;
+    assert!(PromptParser::parse(content).is_ok());
+}
+
+#[test]
+fn test_contains_static_check_rejects_bare_loop_item_object() {
+    // Inside a `for` loop over a list of objects, the bare loop item is an
+    // object — an invalid left operand for `contains` on its own (a field of
+    // it could be, e.g. `ENDPOINT.METHOD contains "G"`, but the item itself
+    // is not a list or a string).
+    let content = r#"--
+name: p
+params:
+  endpoints:
+    type: list
+    etype: object
+    ofields:
+      method:
+        type: string
+        def: "GET"
+    def: [{method: "GET"}]
+--
+{{{for ENDPOINT in ENDPOINTS}}}
+{{{ENDPOINT contains "x" ? "yes" : "no"}}}
+{{{end for}}}
+"#;
+    let res = PromptParser::parse(content);
+    assert!(
+        matches!(res, Err(PromptParseError::ConditionOperatorTypeError { .. })),
+        "{:?}",
+        res
+    );
+}
+
 #[test]
 fn test_condition_case_insensitive_reference_parses() {
     // Condition variable references must be uppercase; the matching against

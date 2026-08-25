@@ -1475,24 +1475,23 @@ fn eval_bin(op: &str, l: &VariableValue, r: &VariableValue) -> Result<VariableVa
             Ok(Boolean(res))
         }
         "contains" | "starts_with" | "ends_with" => {
-            // `contains` is overloaded: works on strings and on lists.
+            // `contains` is overloaded: list membership when the LEFT
+            // operand is a list (§5) — `TAGS contains "api"`, never
+            // `"api" contains TAGS`. A list on the right with a non-list
+            // left operand falls through to `as_strings` below, which
+            // reports a clear type error rather than a confusing
+            // "membership of List in list" message.
             if op == "contains" {
-                if let (List(items), _) | (_, List(items)) = (l, r) {
-                    let needle = match r {
-                        String(s) | LongString(s) => s.clone(),
-                        Number(n) => number_to_string(*n),
-                        Boolean(b) => b.to_string(),
-                        _ => return Err(BuilderError::TypeError(format!(
-                            "cannot check membership of {:?} in list",
-                            r
-                        ))),
-                    };
-                    let found = items.iter().any(|v| match v {
-                        String(s) | LongString(s) => s == &needle,
-                        Number(n) => number_to_string(*n) == needle,
-                        Boolean(b) => b.to_string() == needle,
-                        _ => false,
-                    });
+                if let List(items) = l {
+                    // The right operand is a single element — string,
+                    // number, boolean, or object, compared by value — never
+                    // itself a list (§5).
+                    if let List(_) = r {
+                        return Err(BuilderError::TypeError(
+                            "operator 'contains': right operand must be a single element (string, number, boolean, or object), not a list".into(),
+                        ));
+                    }
+                    let found = items.iter().any(|item| values_equal(item, r));
                     return Ok(Boolean(found));
                 }
             }

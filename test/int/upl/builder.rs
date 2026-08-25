@@ -249,6 +249,106 @@ fn test_string_operators() {
 }
 
 #[test]
+fn test_contains_list_membership_requires_list_on_left() {
+    // §5: `contains` performs list membership testing only when the LEFT
+    // operand is a list — `TAGS contains "api"`, never `"api" contains
+    // TAGS`. The list-on-right form must fail with a type error rather
+    // than silently doing something else.
+    let tags = VariableValue::List(vec![
+        VariableValue::String("api".into()),
+        VariableValue::String("web".into()),
+    ]);
+    assert_eq!(
+        render_str(
+            "{{{TAGS contains \"api\" ? \"yes\" : \"no\"}}}",
+            &[("tags", tags.clone())]
+        ),
+        "yes"
+    );
+
+    let mut m: ValueMap = HashMap::new();
+    m.insert("tags".to_string(), tags);
+    let res = PromptBuilder::new(prompt_with(
+        "{{{\"api\" contains TAGS ? \"yes\" : \"no\"}}}",
+    ))
+    .render(&m);
+    assert!(matches!(res, Err(BuilderError::TypeError(_))), "{:?}", res);
+}
+
+#[test]
+fn test_contains_list_membership_element_may_be_any_scalar_or_object() {
+    // §5: the right operand of `contains` (when the left is a list) may be
+    // any single element — string, number, boolean, or object, compared by
+    // value — but never itself a list.
+    let mut plato = ObjectMap::new();
+    plato.insert("name".into(), VariableValue::String("Plato".into()));
+    plato.insert("era".into(), VariableValue::Number(-428.0));
+    let mut aristotle = ObjectMap::new();
+    aristotle.insert("name".into(), VariableValue::String("Aristotle".into()));
+    aristotle.insert("era".into(), VariableValue::Number(-384.0));
+    let philosophers = VariableValue::List(vec![
+        VariableValue::Object(plato.clone()),
+        VariableValue::Object(aristotle),
+    ]);
+
+    let mut needle_match = ObjectMap::new();
+    needle_match.insert("name".into(), VariableValue::String("Plato".into()));
+    needle_match.insert("era".into(), VariableValue::Number(-428.0));
+
+    let mut needle_miss = ObjectMap::new();
+    needle_miss.insert("name".into(), VariableValue::String("Socrates".into()));
+    needle_miss.insert("era".into(), VariableValue::Number(-470.0));
+
+    let body = "{{{PHILOSOPHERS contains NEEDLE ? \"yes\" : \"no\"}}}";
+    assert_eq!(
+        render_str(body, &[
+            ("philosophers", philosophers.clone()),
+            ("needle", VariableValue::Object(needle_match)),
+        ]),
+        "yes"
+    );
+    assert_eq!(
+        render_str(body, &[
+            ("philosophers", philosophers),
+            ("needle", VariableValue::Object(needle_miss)),
+        ]),
+        "no"
+    );
+}
+
+#[test]
+fn test_contains_string_left_requires_string_right() {
+    // §5: `contains` is overloaded on the LEFT operand's type. When the
+    // left operand is a `string`, the right operand must also be a
+    // string — a list on the right does NOT fall back to membership
+    // testing (only a list on the LEFT triggers that form); it's a type
+    // error, same as any other non-string right operand.
+    let text = VariableValue::String("hello world".into());
+    let items = VariableValue::List(vec![
+        VariableValue::String("a".into()),
+        VariableValue::String("b".into()),
+    ]);
+    let mut m: ValueMap = HashMap::new();
+    m.insert("text".to_string(), text);
+    m.insert("items".to_string(), items);
+    let res =
+        PromptBuilder::new(prompt_with("{{{TEXT contains ITEMS ? \"yes\" : \"no\"}}}")).render(&m);
+    assert!(matches!(res, Err(BuilderError::TypeError(_))), "{:?}", res);
+}
+
+#[test]
+fn test_contains_list_membership_rejects_list_element() {
+    // The right operand must never itself be a list, even when the left
+    // operand is a list too.
+    let numbers = VariableValue::List(vec![VariableValue::Number(1.0), VariableValue::Number(2.0)]);
+    let mut m: ValueMap = HashMap::new();
+    m.insert("a".to_string(), numbers.clone());
+    m.insert("b".to_string(), numbers);
+    let res = PromptBuilder::new(prompt_with("{{{A contains B ? \"yes\" : \"no\"}}}")).render(&m);
+    assert!(matches!(res, Err(BuilderError::TypeError(_))), "{:?}", res);
+}
+
+#[test]
 fn test_equality_operators() {
     assert_eq!(
         render_str("{{{A = B ? \"eq\" : \"ne\"}}}", &[

@@ -263,6 +263,8 @@ pub enum PromptParseError {
         condition_param: String,
         referenced_param: String,
     },
+    #[error("condition operator '{op}': {detail}")]
+    ConditionOperatorTypeError { op: String, detail: String },
 }
 
 // --- Parsing Context ---
@@ -289,11 +291,28 @@ enum Shape<'a> {
     Object(&'a VariableDefinitions),
 }
 
+/// The runtime `VariableValue` kind a condition operand resolves to — used
+/// to statically check the `contains`/`starts_with`/`ends_with` operand-type
+/// rules (RFC §5) at parse time, wherever the operand's type is knowable
+/// without a value in hand. Distinct from `Shape`, which answers "what
+/// fields does dereferencing this expose" (and so collapses a scalar list
+/// down to its *element* type); `OperandKind` answers "what kind is this
+/// reference itself" (a scalar list reference is `List`, not its element
+/// kind).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum OperandKind {
+    Scalar(VariableType),
+    List,
+    Object,
+}
+
 /// A name visible in the body (a declared variable or a loop variable) paired
-/// with its resolved `Shape`.
+/// with its resolved `Shape` (for dotted-path traversal) and `OperandKind`
+/// (the kind of a bare reference to this binding itself).
 struct Binding<'a> {
     name: String,
     shape: Shape<'a>,
+    own_kind: OperandKind,
 }
 
 // --- Extract value from key-value line ---
@@ -1608,6 +1627,7 @@ if let Some(label) = &def.label {
             .map(|(k, v)| Binding {
                 name: k.clone(),
                 shape: Self::shape_of(v),
+                own_kind: Self::kind_of(v),
             })
             .collect();
         let mut scope: Vec<Vec<Binding>> = vec![top];
@@ -1646,6 +1666,39 @@ if let Some(label) = &def.label {
                 }
             }
             other => Shape::Scalar(other),
+        }
+    }
+
+    /// Resolve a variable definition into the `OperandKind` of a *bare*
+    /// reference to it (unlike `shape_of`, which resolves the shape exposed
+    /// by *dereferencing* it — the two agree for scalars/objects but differ
+    /// for `list`/`option_multi`, whose bare reference is a `List` even
+    /// though `shape_of` reports the element shape).
+    fn kind_of(def: &VariableDefinition) -> OperandKind {
+        match def.r#type {
+            VariableType::Object | VariableType::ObjectShape => OperandKind::Object,
+            VariableType::List | VariableType::OptionMulti => OperandKind::List,
+            VariableType::OptionSingle => {
+                let is_object_etype = def.element_type == Some(VariableType::Object)
+                    || def.element_ref.is_some();
+                if is_object_etype {
+                    OperandKind::Object
+                } else {
+                    OperandKind::Scalar(def.element_type.unwrap_or(VariableType::String))
+                }
+            }
+            scalar => OperandKind::Scalar(scalar),
+        }
+    }
+
+    /// The `OperandKind` of a loop item bound to `shape` (the element shape
+    /// of the list being iterated). A list element is always itself a
+    /// scalar or an object — never a list (§3: no nested-list etype) — so
+    /// this conversion is total.
+    fn kind_of_shape(shape: Shape<'_>) -> OperandKind {
+        match shape {
+            Shape::Scalar(t) => OperandKind::Scalar(t),
+            Shape::Object(_) => OperandKind::Object,
         }
     }
 
@@ -1692,6 +1745,7 @@ if let Some(label) = &def.label {
                     scope.push(vec![Binding {
                         name: item.clone(),
                         shape: list_shape,
+                        own_kind: Self::kind_of_shape(list_shape),
                     }]);
                     let r = Self::validate_nodes(body, scope);
                     scope.pop();
@@ -1793,14 +1847,141 @@ if let Some(label) = &def.label {
         }
     }
 
+    /// Resolve the `OperandKind` of a (possibly dotted) condition operand
+    /// path, for the static `contains`/`starts_with`/`ends_with` type
+    /// checks below. Returns `None` when the kind can't be statically
+    /// determined — an undeclared root (tolerated per §3.5; its type is
+    /// only known once a value is supplied at render time) or an
+    /// unresolvable dotted segment (already reported elsewhere, by
+    /// `validate_path`, so silently skipped here rather than double-reported).
+    fn resolve_operand_kind<'a>(path: &str, scope: &[Vec<Binding<'a>>]) -> Option<OperandKind> {
+        let parts: Vec<&str> = path.split('.').collect();
+        let first = parts[0].to_lowercase();
+        let binding = scope
+            .iter()
+            .rev()
+            .flat_map(|f| f.iter())
+            .find(|b| b.name.to_lowercase() == first)?;
+        let mut shape = binding.shape;
+        let mut kind = binding.own_kind;
+        for p in &parts[1..] {
+            match shape {
+                Shape::Object(ofields) => {
+                    let pl = p.to_lowercase();
+                    let (_, fdef) = ofields.iter().find(|(k, _)| k.to_lowercase() == pl)?;
+                    kind = Self::kind_of(fdef);
+                    shape = Self::shape_of(fdef);
+                }
+                Shape::Scalar(_) => return None,
+            }
+        }
+        Some(kind)
+    }
+
+    /// The `OperandKind` a condition expression statically evaluates to,
+    /// when determinable without a value in hand. Every operator in the
+    /// condition grammar (`=`, `!=`, comparisons, the `contains` family,
+    /// `and`, `or`) always produces a `boolean` (as does `!`/`not`), so only
+    /// a bare `Var` reference may be statically unknown.
+    fn static_kind<'a>(expr: &CondExpr, scope: &[Vec<Binding<'a>>]) -> Option<OperandKind> {
+        match expr {
+            CondExpr::Literal(v) => Some(match v {
+                VariableValue::String(_) => OperandKind::Scalar(VariableType::String),
+                VariableValue::LongString(_) => OperandKind::Scalar(VariableType::LongString),
+                VariableValue::Number(_) => OperandKind::Scalar(VariableType::Number),
+                VariableValue::Boolean(_) => OperandKind::Scalar(VariableType::Boolean),
+                VariableValue::List(_) => OperandKind::List,
+                VariableValue::Object(_) => OperandKind::Object,
+            }),
+            CondExpr::Var(name) => Self::resolve_operand_kind(name, scope),
+            CondExpr::Not(_) | CondExpr::Bin { .. } => Some(OperandKind::Scalar(VariableType::Boolean)),
+        }
+    }
+
+    /// Statically check the `contains`/`starts_with`/`ends_with`
+    /// operand-type rules (RFC §5) wherever both operand kinds are known at
+    /// parse time, mirroring `eval_bin` in the builder exactly:
+    /// - list-left `contains`: the right operand must be a single element
+    ///   (string, number, boolean, or object) — never a list.
+    /// - string-left `contains`, and `starts_with`/`ends_with`: both
+    ///   operands must be strings.
+    /// - any other left-operand kind is always a type error.
+    /// An operand whose kind isn't statically known (e.g. a value supplied
+    /// only at render time) is skipped rather than flagged, matching the
+    /// RFC's general "type checking is enforced at runtime" fallback.
+    fn validate_operator_types<'a>(
+        op: &str,
+        left: &CondExpr,
+        right: &CondExpr,
+        scope: &[Vec<Binding<'a>>],
+    ) -> Result<(), PromptParseError> {
+        if op != "contains" && op != "starts_with" && op != "ends_with" {
+            return Ok(());
+        }
+        fn is_string(k: OperandKind) -> bool {
+            matches!(
+                k,
+                OperandKind::Scalar(VariableType::String) | OperandKind::Scalar(VariableType::LongString)
+            )
+        }
+        let err = |detail: String| {
+            Err(PromptParseError::ConditionOperatorTypeError {
+                op: op.to_string(),
+                detail,
+            })
+        };
+        let lk = Self::static_kind(left, scope);
+        let rk = Self::static_kind(right, scope);
+
+        if op == "contains" {
+            return match lk {
+                Some(OperandKind::List) => match rk {
+                    Some(OperandKind::List) => err(
+                        "the right operand of a list membership test must be a single element \
+                         (string, number, boolean, or object), not a list"
+                            .into(),
+                    ),
+                    _ => Ok(()),
+                },
+                Some(k) if is_string(k) => match rk {
+                    Some(rk) if !is_string(rk) => err(format!(
+                        "the left operand is a string, so 'contains' tests substring \
+                         containment and requires a string right operand, got {:?}",
+                        rk
+                    )),
+                    _ => Ok(()),
+                },
+                Some(k) => err(format!(
+                    "requires a list or string left operand, got {:?}",
+                    k
+                )),
+                None => Ok(()),
+            };
+        }
+
+        // starts_with / ends_with: both operands must be strings.
+        if let Some(k) = lk {
+            if !is_string(k) {
+                return err(format!("requires a string left operand, got {:?}", k));
+            }
+        }
+        if let Some(k) = rk {
+            if !is_string(k) {
+                return err(format!("requires a string right operand, got {:?}", k));
+            }
+        }
+        Ok(())
+    }
+
     fn validate_cond<'a>(cond: &CondExpr, scope: &[Vec<Binding<'a>>]) -> Result<(), PromptParseError> {
         match cond {
             CondExpr::Literal(_) => Ok(()),
             CondExpr::Var(name) => Self::validate_path(name, "condition", scope),
             CondExpr::Not(inner) => Self::validate_cond(inner, scope),
-            CondExpr::Bin { left, right, .. } => {
+            CondExpr::Bin { op, left, right } => {
                 Self::validate_cond(left, scope)?;
-                Self::validate_cond(right, scope)
+                Self::validate_cond(right, scope)?;
+                Self::validate_operator_types(op, left, right, scope)
             }
         }
     }

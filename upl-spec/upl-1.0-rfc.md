@@ -776,7 +776,12 @@ All binary operators are **left-associative** (the ternary `? :` is right-associ
 Notes:
 
 - `==` is tokenized as `=`; the two are interchangeable.
-- `contains` is overloaded: when either operand is a `list`, it performs membership testing (whether the list contains the other operand, compared by value); otherwise it tests whether the left string contains the right string. `starts_with` and `ends_with` apply only to strings.
+- `contains` is overloaded on the type of its **left** operand, which is the only operand ever checked for list-ness:
+  - If the left operand is a `list`, `contains` performs membership testing (whether the list contains the right operand, compared by value) — e.g. `TAGS contains "api"`. The right operand must be a single element — `string`, `number`, `boolean`, or `object` (compared by value) — and must **not** itself be a `list`; `TAGS contains OTHER_LIST` is a type error.
+  - If the left operand is a `string` (or `long_string`), `contains` tests whether the left string contains the right string as a substring — e.g. `TEXT contains "hello"`. The right operand must also be a `string`/`long_string`; anything else, including a `list`, is a type error (so the list must be the left operand: `"api" contains TAGS` is a type error, not membership testing).
+  - Any other left-operand type (`number`, `boolean`, `object`) is always a type error for `contains`.
+
+  `starts_with` and `ends_with` apply only to strings (both operands).
 - Comparison operators (`>`, `<`, `>=`, `<=`) require both operands to be numbers; a type mismatch fails evaluation.
 - `=` and `!=` require operands of the same scalar kind (number/number, string/string-or-long_string, boolean/boolean); a mismatch fails evaluation.
 - The string operators (`contains`, `starts_with`, `ends_with`) may also be written in method-call form: `VAR.contains("x")`, `VAR.starts_with("x")`, `VAR.ends_with("x")`. This form is rewritten to the infix form before evaluation and is equivalent.
