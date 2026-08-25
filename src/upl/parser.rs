@@ -2035,6 +2035,24 @@ fn parse_template(s: &str) -> Result<Vec<Node>, PromptParseError> {
     let mut text = String::new();
     let mut i = 0;
     while i < s.len() {
+        // Escapes (§4.5): a backslash immediately followed by `{{{` or
+        // `[[[` emits the three delimiter characters literally instead of
+        // starting a construct/placeholder, and consumes the backslash. A
+        // backslash not immediately followed by one of these two sequences
+        // has no special meaning and falls through to the default
+        // character-copy case below (so `\\{{{` is a literal `\` followed
+        // by an escaped `{{{`, and `\n`/`\t`/etc. are untouched — no other
+        // escape sequences exist).
+        if s[i..].starts_with("\\{{{") {
+            text.push_str("{{{");
+            i += 4;
+            continue;
+        }
+        if s[i..].starts_with("\\[[[") {
+            text.push_str("[[[");
+            i += 4;
+            continue;
+        }
         if s[i..].starts_with("[[[") {
             if let Some(end) = s[i + 3..].find("]]]") {
                 let inner = s[i + 3..i + 3 + end].trim().to_string();

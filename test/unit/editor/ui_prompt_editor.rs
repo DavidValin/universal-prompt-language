@@ -67,6 +67,16 @@ fn nested_if_inside_for_innermost_wins() {
 }
 
 #[test]
+fn block_bgs_ignore_escaped_tags() {
+    // An escaped `\{{{for ...}}}` is literal text describing the syntax,
+    // not a real loop opener, so it must not start a highlighted block.
+    let body = "example: \\{{{for X in Y}}}\nplain line\n";
+    let lines = chars(body);
+    let bgs = compute_block_bgs(&lines);
+    assert_eq!(bgs, vec![Block::None, Block::None, Block::None]);
+}
+
+#[test]
 fn placeholders_detected() {
     let line: Vec<char> = "a [[[VAR]]] b [[[X.Y]]]".chars().collect();
     let spans = find_placeholders(&line);
@@ -81,6 +91,31 @@ fn opens_block_detects_tags() {
     assert!(!opens_block("{{{end for}}}", "for"));
     // opener needs a closing }}}
     assert!(!opens_block("{{{for X in Y", "for"));
+}
+
+#[test]
+fn escaped_placeholder_not_detected() {
+    // RFC §4.5: `\[[[` renders as literal text, not a placeholder, so it
+    // must not be highlighted as one — but a real placeholder later on the
+    // same line still is.
+    let line: Vec<char> = "a \\[[[ literal ]]] b [[[REAL]]]".chars().collect();
+    let spans = find_placeholders(&line);
+    assert_eq!(spans, vec![(21, 31)]);
+}
+
+#[test]
+fn double_escaped_backslash_still_detects_placeholder() {
+    // `\\[[[` is a literal `\` followed by a REAL placeholder (the second
+    // backslash of the pair escapes the first, not the delimiter).
+    let line: Vec<char> = "\\\\[[[VAR]]]".chars().collect();
+    let spans = find_placeholders(&line);
+    assert_eq!(spans, vec![(2, 11)]);
+}
+
+#[test]
+fn opens_block_ignores_escaped_tag() {
+    assert!(!opens_block("\\{{{for X in Y}}}", "for"));
+    assert!(!opens_block("\\{{{if Z}}}", "if"));
 }
 
 #[test]

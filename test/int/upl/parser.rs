@@ -378,6 +378,31 @@ fn test_uppercase_identifiers_parse_clean() {
     assert!(res.is_ok());
 }
 
+// --- Escaping matched delimiters (RFC §4.5) ---
+
+#[test]
+fn test_escaped_matched_braces_parses() {
+    // G2 regression: a matched `{{{...}}}` that isn't a valid construct
+    // used to always be a hard parse error, with no way to write it
+    // literally (e.g. documenting Mustache's `{{{value}}}` syntax).
+    let res = Template::parse("code snippet: \\{{{ hello }}}");
+    assert!(res.is_ok(), "{:?}", res);
+}
+
+#[test]
+fn test_escaped_matched_brackets_parses() {
+    let res = Template::parse("literal: \\[[[ not a real var ]]]");
+    assert!(res.is_ok(), "{:?}", res);
+}
+
+#[test]
+fn test_unescaped_matched_braces_still_a_parse_error() {
+    // The escape is opt-in; a matched `{{{...}}}` that isn't a valid
+    // construct and ISN'T escaped remains a parse error (§4.5 baseline).
+    let res = Template::parse("code snippet: {{{ hello }}}");
+    assert!(matches!(res, Err(PromptParseError::InvalidConditionSyntax(_))));
+}
+
 // --- Parenthesized grouping and `and`/`or`/`not` (RFC §5.1, §5.2) ---
 
 #[test]

@@ -535,6 +535,35 @@ fn test_safety_unmatched_braces_emitted_verbatim() {
 }
 
 #[test]
+fn test_escaped_delimiters_render_literally() {
+    // RFC §4.5: `\{{{` and `\[[[` render as literal `{{{`/`[[[`, and the
+    // rest of a matched-but-escaped group (e.g. the trailing `}}}`) is
+    // then just plain text, needing no escape of its own.
+    let out = render_str("Mustache: \\{{{value}}}", &[]);
+    assert_eq!(out, "Mustache: {{{value}}}");
+
+    let out = render_str("Literal: \\[[[ not a var ]]]", &[]);
+    assert_eq!(out, "Literal: [[[ not a var ]]]");
+}
+
+#[test]
+fn test_double_backslash_escapes_the_escape() {
+    // `\\{{{` is a literal `\` (the first backslash escapes the second)
+    // followed by an escaped `{{{` — not a real construct either.
+    let out = render_str("\\\\{{{X}}}", &[]);
+    assert_eq!(out, "\\{{{X}}}");
+}
+
+#[test]
+fn test_escape_does_not_suppress_real_placeholder_later_on_line() {
+    let out = render_str(
+        "\\[[[ literal ]]] then [[[NAME]]]",
+        &[("name", VariableValue::String("Ada".into()))],
+    );
+    assert_eq!(out, "[[[ literal ]]] then Ada");
+}
+
+#[test]
 fn test_rest_client_example() {
     let body = r#"Please write a Node.js client that calls the following endpoints using fetch:
 

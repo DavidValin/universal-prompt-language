@@ -1072,8 +1072,8 @@ fn compute_block_bgs(lines: &[Vec<char>]) -> Vec<Block> {
     let mut stack: Vec<Block> = Vec::new();
     for (i, line) in lines.iter().enumerate() {
         let s: String = line.iter().collect();
-        let ends_for = s.contains("{{{end for}}}");
-        let ends_if = s.contains("{{{end if}}}");
+        let ends_for = contains_unescaped(&s, "{{{end for}}}");
+        let ends_if = contains_unescaped(&s, "{{{end if}}}");
         let opens_for = opens_block(&s, "for");
         let opens_if = opens_block(&s, "if");
 
@@ -1105,23 +1105,46 @@ fn compute_block_bgs(lines: &[Vec<char>]) -> Vec<Block> {
     out
 }
 
+/// Is the delimiter starting at byte index `idx` in `s` escaped (RFC §4.5:
+/// a backslash immediately before `{{{`/`[[[` escapes it to literal text)?
+/// An odd number of consecutive backslashes immediately preceding `idx`
+/// means it's escaped; an even number (including zero) means it isn't,
+/// since each pair of backslashes is itself an escaped literal backslash.
+fn is_escaped_at(s: &str, idx: usize) -> bool {
+    s[..idx].chars().rev().take_while(|&c| c == '\\').count() % 2 == 1
+}
+
+/// Does `needle` occur in `s` at a position that isn't escaped (§4.5)?
+fn contains_unescaped(s: &str, needle: &str) -> bool {
+    match s.find(needle) {
+        Some(i) => !is_escaped_at(s, i),
+        None => false,
+    }
+}
+
 /// Does `s` contain an opening block tag `<{ { { <kw> ... } } }` (with a
 /// matching `}}}` after the keyword)?
 fn opens_block(s: &str, kw: &str) -> bool {
     let pat = ["{{{", kw, " "].concat();
     match s.find(&pat) {
-        Some(i) => s[i + pat.len()..].contains("}}}"),
-        None => false,
+        Some(i) if !is_escaped_at(s, i) => s[i + pat.len()..].contains("}}}"),
+        _ => false,
     }
 }
 
 /// Find all `[[[...]]]` placeholder spans (start, end) in char indices.
+/// An escaped `\[[[` (§4.5) is skipped: it renders as literal text, not a
+/// placeholder, so it isn't highlighted as one.
 fn find_placeholders(line: &[char]) -> Vec<(usize, usize)> {
     let s: String = line.iter().collect();
     let mut spans = Vec::new();
     let mut i = 0usize;
     while let Some(o) = s[i..].find("[[[") {
         let start = i + o;
+        if is_escaped_at(&s, start) {
+            i = start + 3;
+            continue;
+        }
         match s[start + 3..].find("]]]") {
             Some(e) => {
                 let end = start + 3 + e + 3;

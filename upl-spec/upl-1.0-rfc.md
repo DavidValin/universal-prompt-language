@@ -725,6 +725,20 @@ Authorization: [[[ENDPOINT.HEADERS.AUTHORIZATION]]]
 
 Only `[[[` and `{{{` trigger expansion. An opening `[[[` without a matching closing `]]]`, or a bare `{{{` without a matching `}}}`, is emitted verbatim, so code snippets containing similar-looking sequences are not misinterpreted. However, recognized block constructs — `{{{for ...}}}`, `{{{end for}}}`, `{{{if ...}}}`, `{{{end if}}}` — MUST be balanced: an unclosed `for`/`if`, or a stray `{{{end for}}}`/`{{{end if}}}` with no matching opener, is a parse error.
 
+A **matched** triple-delimiter group is never emitted verbatim on its own: a matched `{{{...}}}` MUST be a valid ternary/`for`/`if` construct (otherwise it's a parse error), and a matched `[[[...]]]` is always interpreted as a placeholder — regardless of what's inside. This matters because prompts routinely need to write these exact sequences literally (Mustache/Handlebars' unescaped-interpolation syntax is `{{{value}}}`, for instance).
+
+To write either sequence literally, escape its **opening** delimiter with a backslash: `\{{{` renders as `{{{`, and `\[[[` renders as `[[[`, with the backslash consumed and no construct/placeholder parsing attempted. No escape is needed for the closing `}}}`/`]]]` — once the opening delimiter has been escaped, the rest of the line is read as plain text, so the later `}}}`/`]]]` is simply literal text too (the same way an unmatched one already is). A backslash not immediately followed by `{{{` or `[[[` has no special meaning and is emitted as-is — so `\\{{{` is a literal `\` followed by an escaped `{{{`, and things like `\n`, `\t`, or a bare `\` elsewhere in the body are untouched (there is no general backslash-escape-sequence syntax; only these two delimiter escapes exist).
+
+```text
+Mustache's unescaped syntax looks like \{{{value}}}.
+```
+
+renders to:
+
+```text
+Mustache's unescaped syntax looks like {{{value}}}.
+```
+
 ### 4.6 Value Rendering and Truthiness
 
 #### 4.6.1 Value Rendering
@@ -1253,7 +1267,8 @@ An implementation conforms to this standard if it:
 - Enforces runtime type checking for all operators in §5, including the `contains` list-membership
   overload and the `==` alias for `=`.
 - Applies the `and`/`or`/`not` short-circuit and truthiness semantics of §5.1, and the operator precedence in §5.2.
-- Reports `for`/`if` block imbalance as parse errors (§4.5).
+- Reports `for`/`if` block imbalance as parse errors (§4.5), and honors the `\{{{`/`\[[[`
+  escapes for literal delimiter text (§4.5).
 - Supports the `exclude_condition` field on top-level parameters (§3.7): parses and
    validates condition expressions at parse time (§9 step 5a), evaluates them at
   build time to hide (exclude) parameters whose condition is truthy, and
