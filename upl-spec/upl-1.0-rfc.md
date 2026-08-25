@@ -39,6 +39,7 @@ extension is permitted. It is divided into two or three sections separated by a 
 - The **metadata section** is a YAML-like block declaring the prompt's identity and its input variables.
 - The **prompt body** is free text that may contain placeholders, conditionals, and loops.
 - A leading `--` line is **optional**: a file may begin directly with its first metadata key. A trailing `--` is also optional and conventionally used to mark the end of the body. Sections are separated by a line containing exactly `--`.
+- The body ends at the **first** line whose trimmed content is exactly `--` (if any); everything from there to the end of the file is the terminator, not body content. Consequently a bare `--` line on its own — e.g. a divider, a CLI `cmd -- args` example written alone, or a YAML-style separator — can never appear as literal body text; there is no escape for it, so such a line must be avoided (e.g. by adding trailing context to the same line, such as `cmd -- args` with the command on it, rather than a lone `--`). Any further **non-blank** line found after the terminator is a parse error (trailing blank lines are harmless and ignored) — earlier revisions of this format silently discarded such trailing content instead of rejecting it.
 
 The `name` metadata field (§2.1) MUST be equal to the file's base name (the file name with its `.txt` or `.upl` extension stripped). A single trailing `.prompt` segment — as produced by legacy tooling — is also stripped before the comparison, so both `my_prompt.txt` and `my_prompt.prompt.txt` resolve to the base name `my_prompt`. Any other suffix is not stripped. A mismatch between the `name` field and the file name is a parse/load error.
 
@@ -1188,7 +1189,7 @@ reusing the `philosopher` shape via `type: philosopher`). It never prompts for
 
 A conforming UPL implementation MUST perform the following steps:
 
-1. **Parse** — split the file into metadata and body sections using the `--` delimiter (the leading `--` is optional). Parse `def`/`opts` values per the literal syntax in §3.3.1 (including the `long_string` heredoc form, §3.5).
+1. **Parse** — split the file into metadata and body sections using the `--` delimiter (the leading `--` is optional). The body ends at the first line that is exactly `--`, if any (§2); any non-blank line found after it is a parse error. Parse `def`/`opts` values per the literal syntax in §3.3.1 (including the `long_string` heredoc form, §3.5).
 2. **Validate header** — ensure required metadata fields are present and well-formed.
    In particular, `name` is required, MUST contain only lowercase alphanumeric
    (UTF-8) characters and underscores, and MUST equal the file's base name

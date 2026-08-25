@@ -265,6 +265,8 @@ pub enum PromptParseError {
     },
     #[error("condition operator '{op}': {detail}")]
     ConditionOperatorTypeError { op: String, detail: String },
+    #[error("Content found after the body's '--' terminator (a bare '--' line inside the body is treated as the terminator, so nothing may follow it): '{0}'")]
+    ContentAfterBodyTerminator(String),
 }
 
 // --- Parsing Context ---
@@ -1465,6 +1467,16 @@ impl PromptParser {
             body.push_str(line);
             body.push('\n');
             ctx.pos += 1;
+        }
+
+        // Any further non-blank line after the body terminator (RFC §2) is
+        // almost certainly an author mistake — a bare '--' line meant as
+        // body content (a divider, a CLI '--' marker, a YAML-style
+        // separator) that got parsed as the terminator instead, silently
+        // truncating everything meant to follow it. Trailing blank lines
+        // (e.g. a final newline at EOF) are harmless and still tolerated.
+        if let Some(stray) = ctx.content[ctx.pos..].iter().find(|l| !l.trim().is_empty()) {
+            return Err(PromptParseError::ContentAfterBodyTerminator(stray.clone()));
         }
 
         Ok(body)

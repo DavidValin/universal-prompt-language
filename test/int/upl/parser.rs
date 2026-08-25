@@ -1561,3 +1561,46 @@ params:
     assert!(vd.exclude_condition.is_some());
 }
 
+// --- Content after the body terminator (RFC §2, G3) ---
+
+#[test]
+fn test_content_after_body_terminator_is_error() {
+    // G3 regression: a bare '--' line inside the body used to silently
+    // truncate everything after it. It must now be a parse error instead.
+    let content = r#"--
+name: p
+params:
+  x:
+    type: string
+    def: "hi"
+--
+Divider below:
+--
+This part used to vanish silently.
+"#;
+    let res = PromptParser::parse(content);
+    assert!(
+        matches!(res, Err(PromptParseError::ContentAfterBodyTerminator(_))),
+        "{:?}",
+        res
+    );
+}
+
+#[test]
+fn test_trailing_blank_lines_after_body_terminator_are_ok() {
+    // A blank line (or several) after the terminator — e.g. a final
+    // newline at EOF — is harmless and must not be flagged.
+    let content = "--\nname: p\nparams:\n  x:\n    type: string\n    def: \"hi\"\n--\nBody text.\n--\n\n\n";
+    let prompt = PromptParser::parse(content).expect("should parse");
+    assert_eq!(prompt.prompt, "Body text.\n");
+}
+
+#[test]
+fn test_body_without_trailing_terminator_still_parses() {
+    // The trailing '--' is optional; a file with no closing terminator at
+    // all must still parse (the whole remainder is the body).
+    let content = "--\nname: p\nparams:\n  x:\n    type: string\n    def: \"hi\"\n--\nBody text.\n";
+    let prompt = PromptParser::parse(content).expect("should parse");
+    assert_eq!(prompt.prompt, "Body text.\n");
+}
+
