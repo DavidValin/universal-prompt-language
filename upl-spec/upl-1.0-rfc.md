@@ -754,6 +754,35 @@ Conditions in `if` blocks, ternaries, and the operand of `!` are evaluated for t
 
 A bare variable reference used as a condition (e.g. `{{{if FLAG}}}`) is truthy per the table above.
 
+### 4.7 Whitespace Around Block Tags
+
+Exactly one newline is trimmed immediately after each of the four block-tag delimiters — the opening `{{{for ...}}}` and `{{{if ...}}}` tags, and the closing `{{{end for}}}` and `{{{end if}}}` tags — so that writing a loop or if-block on its own line does not introduce a blank line into the rendered output:
+
+- If the character(s) immediately following a tag's closing `}}}` are a single newline (`\n` or `\r\n`), that newline is consumed and does **not** appear in the output. At most one newline is trimmed per tag; any further blank lines are preserved as-is.
+- No other whitespace is trimmed: leading spaces/tabs before a tag, and a tag not immediately followed by a newline, are left untouched.
+- Ternary expressions (`{{{cond ? a : b}}}`, §4.2) and placeholders (`[[[VAR]]]`, §4.1) consume no surrounding whitespace at all — everything before and after them, including newlines, is preserved verbatim.
+
+For example:
+
+```text
+Servers:
+{{{for SERVER in SERVERS}}}
+- [[[SERVER]]]
+{{{end for}}}
+Done.
+```
+
+renders (for `SERVERS = ["a", "b"]`) to:
+
+```text
+Servers:
+- a
+- b
+Done.
+```
+
+— not to a version with a blank line after `Servers:`, before each `- [[[SERVER]]]` line, or before `Done.`, which is what a naive line-for-line reading of the template would otherwise produce. An independent implementation that skips this rule will disagree with every rendered example in this document.
+
 ---
 
 ## 5. Condition Operators
@@ -1214,6 +1243,9 @@ An implementation conforms to this standard if it:
   `option_multi`), and `{{{if ...}}}{{{end if}}}` blocks.
 - Renders values and evaluates truthiness per §4.6. Object fields are rendered and
   iterated in **declaration order** (§4.6.1, §7.3).
+- Trims exactly one newline immediately after each `{{{for ...}}}`, `{{{end for}}}`,
+  `{{{if ...}}}`, and `{{{end if}}}` tag (§4.7); no other construct trims surrounding
+  whitespace.
 - Validates, at parse time, that every dotted-path segment after a declared root names
   a real field of the referenced object's resolved shape (§9 step 5); an unknown field
   on a declared object is a parse error. A root variable not declared in `params` is

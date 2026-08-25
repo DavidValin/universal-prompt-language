@@ -571,6 +571,32 @@ Explain how the client should handle errors and retries for each call.
     assert!(out.contains("Note: this endpoint expects a request body."));
 }
 
+#[test]
+fn test_block_tag_newline_trimming() {
+    // RFC §4.7: exactly one newline is trimmed immediately after each of
+    // `{{{for ...}}}`, `{{{end for}}}`, `{{{if ...}}}` and `{{{end if}}}`,
+    // so a loop/if written on its own line doesn't leave a blank line
+    // behind in the output.
+    let body = "Servers:\n{{{for SERVER in SERVERS}}}\n- [[[SERVER]]]\n{{{end for}}}\nDone.\n";
+    let out = render_str(body, &[(
+        "servers",
+        VariableValue::List(vec![
+            VariableValue::String("a".into()),
+            VariableValue::String("b".into()),
+        ]),
+    )]);
+    assert_eq!(out, "Servers:\n- a\n- b\nDone.\n");
+}
+
+#[test]
+fn test_ternary_and_placeholder_do_not_trim_newlines() {
+    // Unlike `for`/`if` block tags, ternaries and placeholders consume no
+    // surrounding whitespace at all (§4.7).
+    let body = "a\n{{{FLAG ? \"yes\" : \"no\"}}}\nb\n[[[FLAG]]]\nc\n";
+    let out = render_str(body, &[("flag", VariableValue::Boolean(true))]);
+    assert_eq!(out, "a\nyes\nb\ntrue\nc\n");
+}
+
 // ---------------------------------------------------------------------------
 // Integration rendering tests (originally in builder_render.rs)
 // ---------------------------------------------------------------------------
