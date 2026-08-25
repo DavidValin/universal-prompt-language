@@ -1429,6 +1429,27 @@ fn eval(e: &CondExpr, scope: &[Frame]) -> Result<VariableValue, BuilderError> {
             let v = eval(inner, scope)?;
             Ok(VariableValue::Boolean(!truthy(&v)))
         }
+        // `and`/`or` (RFC §5.1) operate on truthiness rather than typed
+        // operand comparison, and are short-circuiting: the right operand is
+        // only evaluated (and looked up) when it can affect the result, so a
+        // right-hand reference that would otherwise fail to resolve is safe
+        // to write behind a left operand that already determines the value.
+        CondExpr::Bin { op, left, right } if op == "and" => {
+            let l = eval(left, scope)?;
+            if !truthy(&l) {
+                return Ok(VariableValue::Boolean(false));
+            }
+            let r = eval(right, scope)?;
+            Ok(VariableValue::Boolean(truthy(&r)))
+        }
+        CondExpr::Bin { op, left, right } if op == "or" => {
+            let l = eval(left, scope)?;
+            if truthy(&l) {
+                return Ok(VariableValue::Boolean(true));
+            }
+            let r = eval(right, scope)?;
+            Ok(VariableValue::Boolean(truthy(&r)))
+        }
         CondExpr::Bin { op, left, right } => {
             let l = eval(left, scope)?;
             let r = eval(right, scope)?;

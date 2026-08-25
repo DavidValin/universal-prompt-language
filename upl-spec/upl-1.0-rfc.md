@@ -758,7 +758,7 @@ A bare variable reference used as a condition (e.g. `{{{if FLAG}}}`) is truthy p
 
 ## 5. Condition Operators
 
-All operators are **left-associative** (the ternary `? :` is right-associative — see §5.1). Type checking is enforced at runtime; for example, comparing a number to a string fails evaluation. String literals may use either single (`'...'`) or double (`"..."`) quotes interchangeably. Variables in conditions are referenced by their **bare, uppercase** name (e.g. `A`, `FLAG`, `TAGS`) — **not** wrapped in `[[[...]]]`, which is reserved for placeholders in the prompt body (§4.1) and ternary branch value references.
+All binary operators are **left-associative** (the ternary `? :` is right-associative — see §5.2); `!` and `not` are prefix unary operators. Type checking is enforced at runtime; for example, comparing a number to a string fails evaluation. String literals may use either single (`'...'`) or double (`"..."`) quotes interchangeably. Variables in conditions are referenced by their **bare, uppercase** name (e.g. `A`, `FLAG`, `TAGS`) — **not** wrapped in `[[[...]]]`, which is reserved for placeholders in the prompt body (§4.1) and ternary branch value references.
 
 | Operator        | Meaning                              | Example                             |
 |-----------------|--------------------------------------|-------------------------------------|
@@ -781,17 +781,44 @@ Notes:
 - `=` and `!=` require operands of the same scalar kind (number/number, string/string-or-long_string, boolean/boolean); a mismatch fails evaluation.
 - The string operators (`contains`, `starts_with`, `ends_with`) may also be written in method-call form: `VAR.contains("x")`, `VAR.starts_with("x")`, `VAR.ends_with("x")`. This form is rewritten to the infix form before evaluation and is equivalent.
 
-### 5.1 Operator Precedence
+### 5.1 Logical Combinators (`and`, `or`, `not`)
 
-From highest to lowest:
+Comparisons and string tests (above) may be combined into a compound condition with the keyword operators `and`, `or`, and `not`:
 
-1. `!` (unary NOT)
+| Operator | Meaning                    | Example                                |
+|----------|-----------------------------|-----------------------------------------|
+| `not`    | Logical NOT (unary, keyword form) | `not (TIER = "free" or TIER = "trial")` |
+| `and`    | Logical AND (binary)        | `HOURS > 10 and TAGS contains "api"`     |
+| `or`     | Logical OR (binary)         | `TIER = "pro" or TIER = "enterprise"`    |
+
+`and` and `or` do **not** require their operands to be `boolean`-typed: each operand is evaluated for **truthiness** (§4.6.2), exactly as an `if` block or bare-variable condition is, and the result is always a `boolean`. Both are **short-circuiting**: for `and`, the right operand is evaluated (and its value looked up) only if the left operand is truthy; for `or`, only if the left operand is falsy. This matters when the right operand would otherwise fail to resolve — `HAS_TAGS and TAGS contains "api"` never touches `TAGS` when `HAS_TAGS` is falsy.
+
+`not` is a keyword alias for `!` with **different precedence** (§5.2): `!` binds only to the single primary immediately after it (a variable, literal, or parenthesized group), matching its existing tight-binding behavior, while `not` binds to the entire comparison/equality/string-operator expression that follows — e.g. `not A contains "x"` is `not (A contains "x")`, whereas `!A contains "x"` is `(!A) contains "x"`. Prefer `not` when combining with `and`/`or`; `!` remains available for negating a single value inline (e.g. `!FLAG`).
+
+### 5.2 Parenthesized Grouping and Operator Precedence
+
+Parentheses `( ... )` group any sub-expression built from the operators in §5 and §5.1, overriding the default precedence below. A group's contents are themselves a full condition expression, so groups may nest and may contain `and`, `or`, and `not`.
+
+Parentheses are **optional**: a condition consisting of a single comparison, string test, or bare variable/literal (e.g. `HOURS > 10`, `FLAG`) never needs to be wrapped, and default precedence already resolves an unparenthesized compound expression unambiguously (e.g. `A or B and C` parses as `A or (B and C)`, per the precedence order below). Parentheses are only necessary to force a grouping that default precedence would not otherwise produce, e.g. `(A or B) and C`.
+
+From highest to lowest precedence:
+
+1. `!` (unary NOT, binds to a single primary — a variable, literal, or parenthesized group)
 2. `>`, `<`, `>=`, `<=`
 3. `=`, `!=`
 4. `contains`, `starts_with`, `ends_with`
-5. `? :` ternary (right-associative)
+5. `not` (unary NOT, binds to the comparison/equality/string-operator expression that follows)
+6. `and`
+7. `or`
+8. `? :` ternary (right-associative)
 
-The ternary is the lowest-precedence operator. Parentheses may be used to group sub-expressions. Note: branches of a ternary are plain values (a `[[[VAR]]]` reference, a quoted string, a bare number/boolean, or literal text); **nested ternaries are not supported** inside ternary branches.
+The ternary remains the lowest-precedence operator. Note: branches of a ternary are plain values (a `[[[VAR]]]` reference, a quoted string, a bare number/boolean, or literal text); **nested ternaries are not supported** inside ternary branches — this is unaffected by `and`/`or`/`not`/parentheses, which apply only to the condition itself.
+
+```text
+{{{if (TIER = "pro" or TIER = "enterprise") and not SUSPENDED}}}
+Full access enabled.
+{{{end if}}}
+```
 
 ---
 
@@ -1188,7 +1215,7 @@ An implementation conforms to this standard if it:
   allowed at parse time and resolved at render time (§9 step 6).
 - Enforces runtime type checking for all operators in §5, including the `contains` list-membership
   overload and the `==` alias for `=`.
-- Applies the operator precedence in §5.1.
+- Applies the `and`/`or`/`not` short-circuit and truthiness semantics of §5.1, and the operator precedence in §5.2.
 - Reports `for`/`if` block imbalance as parse errors (§4.5).
 - Supports the `exclude_condition` field on top-level parameters (§3.7): parses and
    validates condition expressions at parse time (§9 step 5a), evaluates them at

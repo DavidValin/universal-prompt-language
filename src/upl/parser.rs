@@ -2303,7 +2303,9 @@ fn tokenize_cond(s: &str) -> Result<Vec<Tok>, PromptParseError> {
             match buf.as_str() {
                 "true" => toks.push(Tok::Bool(true)),
                 "false" => toks.push(Tok::Bool(false)),
-                "contains" | "starts_with" | "ends_with" => toks.push(Tok::Op(buf)),
+                "contains" | "starts_with" | "ends_with" | "and" | "or" | "not" => {
+                    toks.push(Tok::Op(buf))
+                }
                 _ => toks.push(Tok::Var(buf)),
             }
             i = j;
@@ -2346,8 +2348,10 @@ struct CondParser {
 }
 
 impl CondParser {
+    /// Top-level entry point: a full condition is the lowest-precedence
+    /// `or` level, and no tokens may remain once it's been consumed.
     fn parse(&mut self) -> Result<CondExpr, PromptParseError> {
-        let e = self.parse_string_op()?;
+        let e = self.parse_or()?;
         if self.pos != self.toks.len() {
             return Err(PromptParseError::InvalidConditionSyntax("trailing tokens".into()));
         }
@@ -2356,6 +2360,60 @@ impl CondParser {
 
     fn peek(&self) -> Option<&Tok> {
         self.toks.get(self.pos)
+    }
+
+    /// `or` (§5.1, §5.2): lowest-precedence binary operator, left-associative.
+    fn parse_or(&mut self) -> Result<CondExpr, PromptParseError> {
+        let mut left = self.parse_and()?;
+        loop {
+            match self.peek() {
+                Some(Tok::Op(o)) if o == "or" => {
+                    self.pos += 1;
+                    let right = self.parse_and()?;
+                    left = CondExpr::Bin {
+                        op: "or".into(),
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    };
+                }
+                _ => break,
+            }
+        }
+        Ok(left)
+    }
+
+    /// `and` (§5.1, §5.2): binds tighter than `or`, left-associative.
+    fn parse_and(&mut self) -> Result<CondExpr, PromptParseError> {
+        let mut left = self.parse_not()?;
+        loop {
+            match self.peek() {
+                Some(Tok::Op(o)) if o == "and" => {
+                    self.pos += 1;
+                    let right = self.parse_not()?;
+                    left = CondExpr::Bin {
+                        op: "and".into(),
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    };
+                }
+                _ => break,
+            }
+        }
+        Ok(left)
+    }
+
+    /// `not` (§5.1, §5.2): prefix, binds to the whole comparison/equality/
+    /// string-operator expression that follows — looser than `!`, which
+    /// binds only to a single primary (see `parse_unary`).
+    fn parse_not(&mut self) -> Result<CondExpr, PromptParseError> {
+        if let Some(Tok::Op(o)) = self.peek() {
+            if o == "not" {
+                self.pos += 1;
+                let inner = self.parse_not()?;
+                return Ok(CondExpr::Not(Box::new(inner)));
+            }
+        }
+        self.parse_string_op()
     }
 
     fn parse_string_op(&mut self) -> Result<CondExpr, PromptParseError> {
@@ -2438,7 +2496,12 @@ impl CondParser {
             Some(Tok::Num(n)) => Ok(CondExpr::Literal(VariableValue::Number(n))),
             Some(Tok::Bool(b)) => Ok(CondExpr::Literal(VariableValue::Boolean(b))),
             Some(Tok::LParen) => {
-                let e = self.parse()?;
+                // A parenthesized group is a full condition expression (it
+                // may itself contain `or`/`and`/`not`), but must NOT enforce
+                // end-of-input here — that check belongs only to the
+                // top-level `parse()`, since there are always more tokens
+                // (at least the closing `)`) left to consume after a group.
+                let e = self.parse_or()?;
                 match self.next() {
                     Some(Tok::RParen) => Ok(e),
                     _ => Err(PromptParseError::InvalidConditionSyntax("expected ')'".into())),

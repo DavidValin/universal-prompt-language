@@ -281,7 +281,7 @@ fn test_comparison_operators() {
 #[test]
 fn test_operator_precedence_not_vs_comparison() {
     // a = b contains c  =>  (a = b) contains c  (since `=` binds tighter
-    // than `contains` per §5.1). a="x", b="x" => (a=b) => Boolean(true);
+    // than `contains` per §5.2). a="x", b="x" => (a=b) => Boolean(true);
     // Boolean contains "x" => type error.
     let body = "{{{A = B contains \"x\" ? \"yes\" : \"no\"}}}";
     // a="x", b="x" => (a=b) => true (Boolean) => Boolean contains "x" => type error
@@ -290,6 +290,141 @@ fn test_operator_precedence_not_vs_comparison() {
     m.insert("b".to_string(), VariableValue::String("x".into()));
     let res = PromptBuilder::new(prompt_with(body)).render(&m);
     assert!(res.is_err());
+}
+
+// --- Parenthesized grouping and `and`/`or`/`not` (RFC §5.1, §5.2) ---
+
+#[test]
+fn test_parenthesized_condition_renders() {
+    // E2 regression: parentheses previously always failed to parse.
+    let body = "{{{(HOURS > 10) ? \"ample\" : \"limited\"}}}";
+    assert_eq!(
+        render_str(body, &[("hours", VariableValue::Number(12.0))]),
+        "ample"
+    );
+    assert_eq!(
+        render_str(body, &[("hours", VariableValue::Number(3.0))]),
+        "limited"
+    );
+}
+
+#[test]
+fn test_and_operator_truthiness() {
+    // `and`/`or` operate on truthiness (§4.6.2), not typed equality, so
+    // operands of different kinds (number, string) combine freely.
+    let body = "{{{N > 0 and S ? \"yes\" : \"no\"}}}";
+    assert_eq!(
+        render_str(body, &[
+            ("n", VariableValue::Number(1.0)),
+            ("s", VariableValue::String("hi".into())),
+        ]),
+        "yes"
+    );
+    assert_eq!(
+        render_str(body, &[
+            ("n", VariableValue::Number(1.0)),
+            ("s", VariableValue::String("".into())),
+        ]),
+        "no"
+    );
+}
+
+#[test]
+fn test_or_operator_truthiness() {
+    let body = "{{{TIER = \"pro\" or TIER = \"enterprise\" ? \"full\" : \"limited\"}}}";
+    assert_eq!(
+        render_str(body, &[("tier", VariableValue::String("enterprise".into()))]),
+        "full"
+    );
+    assert_eq!(
+        render_str(body, &[("tier", VariableValue::String("free".into()))]),
+        "limited"
+    );
+}
+
+#[test]
+fn test_and_short_circuits_right_operand() {
+    // When the left operand of `and` is falsy, the right operand must not
+    // be evaluated — so a reference to an undeclared variable there is
+    // safe rather than a MissingValue error.
+    let body = "{{{HAS_TAGS and TAGS contains \"api\" ? \"yes\" : \"no\"}}}";
+    assert_eq!(
+        render_str(body, &[("has_tags", VariableValue::Boolean(false))]),
+        "no"
+    );
+}
+
+#[test]
+fn test_or_short_circuits_right_operand() {
+    // When the left operand of `or` is truthy, the right operand must not
+    // be evaluated.
+    let body = "{{{IS_ADMIN or PERMS contains \"write\" ? \"yes\" : \"no\"}}}";
+    assert_eq!(
+        render_str(body, &[("is_admin", VariableValue::Boolean(true))]),
+        "yes"
+    );
+}
+
+#[test]
+fn test_not_keyword_binds_looser_than_bang() {
+    // `not` (§5.1) binds to the whole comparison/string-op expression that
+    // follows, unlike `!` which binds only to a single primary (§5.2).
+    // not A contains "hello"  =>  not (A contains "hello")  =>  no type error.
+    let not_body = "{{{not A contains \"hello\" ? \"yes\" : \"no\"}}}";
+    assert_eq!(
+        render_str(not_body, &[("a", VariableValue::String("hello world".into()))]),
+        "no"
+    );
+    // !A contains "hello"  =>  (!A) contains "hello"  =>  Boolean contains
+    // String is a type error.
+    let bang_body = "{{{!A contains \"hello\" ? \"yes\" : \"no\"}}}";
+    let mut m: ValueMap = HashMap::new();
+    m.insert("a".to_string(), VariableValue::String("hello world".into()));
+    let res = PromptBuilder::new(prompt_with(bang_body)).render(&m);
+    assert!(res.is_err());
+}
+
+#[test]
+fn test_parentheses_override_default_and_or_precedence() {
+    // Default precedence: `and` binds tighter than `or`, so
+    // `A or B and C` parses as `A or (B and C)`.
+    let default_body = "{{{A or B and C ? \"T\" : \"F\"}}}";
+    // Explicit grouping flips the result: `(A or B) and C`.
+    let grouped_body = "{{{(A or B) and C ? \"T\" : \"F\"}}}";
+    let values = [
+        ("a", VariableValue::Boolean(true)),
+        ("b", VariableValue::Boolean(false)),
+        ("c", VariableValue::Boolean(false)),
+    ];
+    assert_eq!(render_str(default_body, &values), "T"); // true or (false and false) = true
+    assert_eq!(render_str(grouped_body, &values), "F"); // (true or false) and false = false
+}
+
+#[test]
+fn test_rfc_grouped_and_or_not_example() {
+    // RFC §5.2 worked example, in an if-block.
+    let body = "{{{if (TIER = \"pro\" or TIER = \"enterprise\") and not SUSPENDED}}}Full access enabled.{{{end if}}}";
+    assert_eq!(
+        render_str(body, &[
+            ("tier", VariableValue::String("pro".into())),
+            ("suspended", VariableValue::Boolean(false)),
+        ]),
+        "Full access enabled."
+    );
+    assert_eq!(
+        render_str(body, &[
+            ("tier", VariableValue::String("pro".into())),
+            ("suspended", VariableValue::Boolean(true)),
+        ]),
+        ""
+    );
+    assert_eq!(
+        render_str(body, &[
+            ("tier", VariableValue::String("free".into())),
+            ("suspended", VariableValue::Boolean(false)),
+        ]),
+        ""
+    );
 }
 
 #[test]

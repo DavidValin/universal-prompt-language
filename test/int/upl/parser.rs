@@ -378,6 +378,82 @@ fn test_uppercase_identifiers_parse_clean() {
     assert!(res.is_ok());
 }
 
+// --- Parenthesized grouping and `and`/`or`/`not` (RFC §5.1, §5.2) ---
+
+#[test]
+fn test_parenthesized_condition_parses() {
+    // Regression: parentheses previously always failed to parse (the paren
+    // branch of `parse_primary` enforced end-of-input before consuming the
+    // closing `)`), even though the tokenizer and ternary splitter already
+    // supported them.
+    let res = Template::parse("{{{(HOURS > 10) ? \"ample\" : \"limited\"}}}");
+    assert!(res.is_ok(), "{:?}", res);
+}
+
+#[test]
+fn test_nested_parentheses_condition_parses() {
+    let res = Template::parse("{{{((A > 1)) ? \"y\" : \"n\"}}}");
+    assert!(res.is_ok(), "{:?}", res);
+}
+
+#[test]
+fn test_and_operator_condition_parses() {
+    let res = Template::parse("{{{A > 1 and B < 2 ? \"y\" : \"n\"}}}");
+    assert!(res.is_ok(), "{:?}", res);
+}
+
+#[test]
+fn test_or_operator_condition_parses() {
+    let res = Template::parse("{{{A = \"pro\" or A = \"enterprise\" ? \"y\" : \"n\"}}}");
+    assert!(res.is_ok(), "{:?}", res);
+}
+
+#[test]
+fn test_not_keyword_condition_parses() {
+    let res = Template::parse("{{{if not SUSPENDED}}}ok{{{end if}}}");
+    assert!(res.is_ok(), "{:?}", res);
+}
+
+#[test]
+fn test_grouped_and_or_not_condition_parses() {
+    // The RFC §5.2 example verbatim.
+    let res = Template::parse(
+        "{{{if (TIER = \"pro\" or TIER = \"enterprise\") and not SUSPENDED}}}ok{{{end if}}}",
+    );
+    assert!(res.is_ok(), "{:?}", res);
+}
+
+#[test]
+fn test_lowercase_variable_inside_parens_is_error() {
+    // Uppercase enforcement (§4.1) must still apply to variables nested
+    // inside a parenthesized group.
+    let res = Template::parse("{{{(hours > 10) ? \"y\" : \"n\"}}}");
+    assert!(matches!(res, Err(PromptParseError::LowercaseIdentifier { .. })));
+}
+
+#[test]
+fn test_exclude_condition_with_and_or_not_parens_parses() {
+    let content = r#"--
+name: p
+params:
+  tier:
+    type: string
+    def: "free"
+  suspended:
+    type: boolean
+    def: false
+  other:
+    type: string
+    exclude_condition: (TIER = "pro" or TIER = "enterprise") and not SUSPENDED
+    def: "x"
+--
+[[[OTHER]]]
+"#;
+    let prompt = PromptParser::parse(content).expect("should parse");
+    let vd = prompt.variable_definitions.get("other").unwrap();
+    assert!(vd.exclude_condition.is_some());
+}
+
 #[test]
 fn test_unmatched_if_is_error() {
     let res = Template::parse("{{{if true}}}body");
