@@ -362,7 +362,7 @@ Content-Type: application/json
 [[[BODY]]]
 ```
 
-renders (with default) to:
+renders — with `BODY` defaulted and `URL` supplied at render time as `https://api.example.com` — to:
 
 ```text
 POST https://api.example.com
