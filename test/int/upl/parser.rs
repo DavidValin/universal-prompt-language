@@ -1604,3 +1604,31 @@ fn test_body_without_trailing_terminator_still_parses() {
     assert_eq!(prompt.prompt, "Body text.\n");
 }
 
+// --- Header delimiter exactness (RFC §2, G9) ---
+
+#[test]
+fn test_leading_triple_dash_is_error() {
+    // G9 regression: §2 requires the delimiter to be a line containing
+    // *exactly* '--'; the opening-delimiter check used to accept any
+    // '--'-prefixed line (e.g. '---'), silently treating it as the opener.
+    let content = "---\nname: p\nparams:\n  x:\n    type: string\n    def: \"hi\"\n--\nBody text.\n";
+    let res = PromptParser::parse(content);
+    assert!(matches!(res, Err(PromptParseError::UnexpectedLine(_))), "{:?}", res);
+}
+
+#[test]
+fn test_exact_leading_delimiter_still_parses() {
+    let content = "--\nname: p\nparams:\n  x:\n    type: string\n    def: \"hi\"\n--\nBody text.\n";
+    let prompt = PromptParser::parse(content).expect("should parse");
+    assert_eq!(prompt.prompt, "Body text.\n");
+}
+
+#[test]
+fn test_omitted_leading_delimiter_still_parses() {
+    // The leading '--' is optional, not just exact-or-nothing: a file may
+    // begin directly with its first metadata key.
+    let content = "name: p\nparams:\n  x:\n    type: string\n    def: \"hi\"\n--\nBody text.\n";
+    let prompt = PromptParser::parse(content).expect("should parse");
+    assert_eq!(prompt.prompt, "Body text.\n");
+}
+

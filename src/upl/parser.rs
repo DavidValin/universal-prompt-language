@@ -501,8 +501,12 @@ impl PromptParser {
         let mut header = HashMap::new();
 
         // The opening '--' delimiter is optional: a file may begin directly
-        // with header keys.
-        if ctx.pos < ctx.content.len() && ctx.content[ctx.pos].starts_with("--") {
+        // with header keys. Per §2 the delimiter is a line containing
+        // *exactly* '--' — matched with the same exactness as the closing
+        // delimiters below, so a line like '---' is not silently accepted
+        // as the opener; it falls through and is rejected as an invalid
+        // header line instead.
+        if ctx.pos < ctx.content.len() && ctx.content[ctx.pos].trim() == "--" {
             ctx.pos += 1;
             ctx.line_num += 1;
         }
