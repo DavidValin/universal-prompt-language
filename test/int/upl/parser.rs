@@ -809,6 +809,82 @@ params:
     assert!(selected.ofields_definitions.is_some());
 }
 
+// --- Same `label` rules for the INLINE `object` etype (RFC §3.3/§3.6, E6) ---
+//
+// The RFC used to say `label` is "ignored" for the inline `object` etype,
+// but the interactive builder needs one just as much as it does for a
+// referenced `object_shape` — there's nothing about writing the shape
+// inline instead of by name that removes the need for a menu label.
+
+#[test]
+fn test_option_inline_object_etype_without_label_is_error() {
+    // E6 regression: this used to parse successfully (and non-interactive
+    // builds succeeded too), only crashing later when actually building
+    // interactively, since the picker had no field to display.
+    let content = r#"--
+name: p
+params:
+  choice:
+    type: option_single
+    etype: object
+    ofields:
+      name:
+        type: string
+    opts:
+      - { name: "a" }
+      - { name: "b" }
+--
+[[[CHOICE.NAME]]]
+"#;
+    let res = PromptParser::parse(content);
+    assert!(matches!(res, Err(PromptParseError::MissingLabelForObjectEtype { .. })), "{:?}", res);
+}
+
+#[test]
+fn test_option_inline_object_etype_with_unknown_label_field_is_error() {
+    let content = r#"--
+name: p
+params:
+  choice:
+    type: option_single
+    etype: object
+    label: bogus
+    ofields:
+      name:
+        type: string
+    opts:
+      - { name: "a" }
+      - { name: "b" }
+--
+[[[CHOICE.NAME]]]
+"#;
+    let res = PromptParser::parse(content);
+    assert!(matches!(res, Err(PromptParseError::UnknownLabelField { .. })), "{:?}", res);
+}
+
+#[test]
+fn test_option_inline_object_etype_with_label_parses() {
+    let content = r#"--
+name: p
+params:
+  choice:
+    type: option_single
+    etype: object
+    label: name
+    ofields:
+      name:
+        type: string
+    opts:
+      - { name: "a" }
+      - { name: "b" }
+--
+[[[CHOICE.NAME]]]
+"#;
+    let prompt = PromptParser::parse(content).expect("should parse");
+    let choice = prompt.variable_definitions.get("choice").unwrap();
+    assert_eq!(choice.label.as_deref(), Some("name"));
+}
+
 #[test]
 fn test_option_object_etype_opt_missing_label_field_is_error() {
     let content = r#"--

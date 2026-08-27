@@ -197,11 +197,11 @@ pub enum PromptParseError {
     OptionEntryTypeMismatch { index: usize, etype: String, value: String },
     #[error("Option 'label' is only allowed for 'option_single' and 'option_multi' with an object_shape etype")]
     InvalidLabelForType,
-    #[error("Option 'label' is required for '{path}' because etype is a referenced object_shape")]
+    #[error("Option 'label' is required for '{path}' because etype is object-shaped (either an inline 'object' or a referenced object_shape)")]
     MissingLabelForObjectEtype { path: String },
-    #[error("Option 'label' field '{label}' is not declared on referenced object_shape '{obj}'")]
+    #[error("Option 'label' field '{label}' is not declared on the object shape of '{obj}'")]
     UnknownLabelField { label: String, obj: String },
-    #[error("Option 'label' field '{label}' on object_shape '{obj}' must be string or long_string, got {got:?}")]
+    #[error("Option 'label' field '{label}' on the object shape of '{obj}' must be string or long_string, got {got:?}")]
     InvalidLabelFieldType { label: String, obj: String, got: VariableType },
     #[error("'ofields' is only allowed on 'object' and 'object_shape' types (got {type_name})")]
     InvalidOfieldsForType { type_name: String },
@@ -1241,8 +1241,14 @@ impl PromptParser {
                 });
             }
 
-            // `label` rules apply only when the etype is a referenced object.
-            let is_object_etype = etype == Some(Object) && def.element_ref.is_some();
+            // `label` is required for ANY object-shaped option — inline
+            // `etype: object` or a referenced `object_shape` alike (E6):
+            // the interactive picker needs a display field either way, and
+            // there's nothing about the inline form that makes a label
+            // unnecessary. (Previously this only fired for a referenced
+            // shape, so an inline object option with no label parsed fine
+            // and only failed later, when actually building interactively.)
+            let is_object_etype = etype == Some(Object);
             if is_object_etype {
                 let label = match &def.label {
                     Some(l) if !l.trim().is_empty() => l.trim().to_string(),
@@ -1266,7 +1272,7 @@ impl PromptParser {
                                     obj: def
                                         .element_ref
                                         .clone()
-                                        .unwrap_or_else(|| "<object>".into()),
+                                        .unwrap_or_else(|| path.to_string()),
                                     got: fdef.r#type,
                                 });
                             }
@@ -1277,7 +1283,7 @@ impl PromptParser {
                                 obj: def
                                     .element_ref
                                     .clone()
-                                    .unwrap_or_else(|| "<object>".into()),
+                                    .unwrap_or_else(|| path.to_string()),
                             });
                         }
                     }
