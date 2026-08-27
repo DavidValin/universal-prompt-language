@@ -34,7 +34,7 @@ clean:
 doc:
 	npx mdpdf upl-spec/upl-1.0-rfc.md \
 	  --output upl-spec/upl-1.0-rfc.pdf \
-	  --css "body{font-family:'Nimbus Roman Regular','Times New Roman',serif}"
+	  --css "body{font-family:'Times New Roman', 'Nimbus Roman Regular', serif}"
 
 # Install the release binary. Detects Linux, macOS and Windows (MinGW/MSYS/Cygwin).
 # On Unix it installs to $(DESTDIR)$(PREFIX)/bin (default /usr/local/bin); on
