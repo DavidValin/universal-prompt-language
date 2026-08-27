@@ -665,6 +665,30 @@ impl PromptParser {
                 Self::resolve_one(nd, &npath, root, visiting, defaults)?;
             }
             visiting.remove(&refname.to_lowercase());
+            // Copy the object_shape's field defaults (every key starting
+            // with `<target_name>.`) onto this list/option's own canonical
+            // path (RFC §3, E5): a specific element instance is looked up
+            // as `<path>[<i>].<field>`, and the builder falls back from
+            // that indexed path to this canonical `<path>.<field>` entry
+            // when synthesizing a field JSON/interactive input didn't
+            // supply. Mirrors the `type_ref` copy below exactly, except the
+            // destination here is a template shared by every element
+            // instead of one fixed inheriting path.
+            let src_prefix = format!("{}.", target_name);
+            let copies: Vec<(String, VariableValue)> = defaults
+                .iter()
+                .filter_map(|(k, v)| {
+                    if k.starts_with(&src_prefix) {
+                        let rest = &k[src_prefix.len()..];
+                        Some((format!("{}.{}", path, rest), v.clone()))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for (k, v) in copies {
+                defaults.entry(k).or_insert(v);
+            }
             // Normalize the ref to the target's declared name so downstream
             // default lookup (keyed by declared name) is case-insensitive.
             def.element_ref = Some(target_name);

@@ -179,31 +179,38 @@ impl PromptBuilder {
         map
     }
 
+    /// Look up a declared `def` for `path`, falling back from a specific
+    /// list/option element instance path (e.g. `servers[0].port`) to the
+    /// canonical per-field default `etype: <object_shape>` copies onto the
+    /// list/option's own path (`servers.port`) during element-ref
+    /// resolution (RFC §3, E5) — every element shares the same field
+    /// defaults, so there's no reason to key them per-instance.
+    fn lookup_default(&self, path: &str) -> Option<VariableValue> {
+        self.prompt
+            .variable_defaults
+            .get(path)
+            .or_else(|| {
+                strip_index_segment(path).and_then(|canonical| self.prompt.variable_defaults.get(&canonical))
+            })
+            .cloned()
+    }
+
     fn default_value(&self, path: &str, def: &VariableDefinition) -> VariableValue {
         use VariableType::*;
         match def.r#type {
             String | LongString => self
-                .prompt
-                .variable_defaults
-                .get(path)
-                .cloned()
+                .lookup_default(path)
                 .unwrap_or(VariableValue::String(::std::string::String::new())),
             Number => self
-                .prompt
-                .variable_defaults
-                .get(path)
-                .cloned()
+                .lookup_default(path)
                 .unwrap_or(VariableValue::Number(0.0)),
             Boolean => self
-                .prompt
-                .variable_defaults
-                .get(path)
-                .cloned()
+                .lookup_default(path)
                 .unwrap_or(VariableValue::Boolean(false)),
             OptionSingle => {
                 let etype = def.element_type.unwrap_or(VariableType::String);
-                if let Some(v) = self.prompt.variable_defaults.get(path) {
-                    return v.clone();
+                if let Some(v) = self.lookup_default(path) {
+                    return v;
                 }
                 if let Some(opts) = &def.options {
                     if let Some(first) = opts.first() {
@@ -213,8 +220,8 @@ impl PromptBuilder {
                 option_type_zero(etype)
             }
             OptionMulti => {
-                if let Some(v) = self.prompt.variable_defaults.get(path) {
-                    return v.clone();
+                if let Some(v) = self.lookup_default(path) {
+                    return v;
                 }
                 VariableValue::List(vec![])
             }
@@ -231,8 +238,8 @@ impl PromptBuilder {
                 // literal declares wins; any key it doesn't mention falls
                 // back to the shape's own default for that field. Nested
                 // object fields merge recursively for the same reason.
-                if let Some(VariableValue::Object(overrides)) = self.prompt.variable_defaults.get(path) {
-                    map = merge_object_default(map, overrides);
+                if let Some(VariableValue::Object(overrides)) = self.lookup_default(path) {
+                    map = merge_object_default(map, &overrides);
                 }
                 VariableValue::Object(map)
             }
@@ -1230,6 +1237,24 @@ fn option_match_index(
         }),
         _ => None,
     }
+}
+
+/// Strip a `[N]` list/option-element index from `path`'s first segment, if
+/// present, so a specific element instance path (e.g. `servers[0].port` or
+/// `servers[0]`) maps back to the list/option's own canonical path
+/// (`servers.port` / `servers`) — where `etype: <object_shape>` field
+/// defaults are copied during element-ref resolution (RFC §3, E5). The
+/// index only ever appears in the leftmost segment, since only a list/
+/// option_multi's own elements are indexed. Returns `None` if there's no
+/// index to strip (nothing to fall back to beyond the exact path already
+/// tried).
+fn strip_index_segment(path: &str) -> Option<String> {
+    let open = path.find('[')?;
+    let close = path[open..].find(']')? + open;
+    let mut out = String::with_capacity(path.len() - (close - open + 1));
+    out.push_str(&path[..open]);
+    out.push_str(&path[close + 1..]);
+    Some(out)
 }
 
 /// Merge an object-level `def` literal's declared fields over a base map of

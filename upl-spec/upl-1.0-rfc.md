@@ -287,6 +287,8 @@ Enabled:
 {{{end for}}}
 ```
 
+The object_shape's field-level `def`s reach every element this way, not just the list/option's own `def:` literal: if an individual element is supplied only partially — e.g. via JSON, `{"servers": [{"host": "only"}]}` against the `servers` declaration above — any field the element's value doesn't mention (here, `port`) falls back to the shape's own field default (`8080`) for that field, the same as it would for a top-level `object`. There is no way to declare a *per-element* object-level default override the way `type: <name>` reuse can (§3.4.2, §3 `def` row) — a list/option has one shared element shape, not a fixed set of individually-declared instances, so only the shape's own field defaults apply uniformly to every element; supplying a different value per element is only possible via `def:`/JSON/interactive input, not via a declared default.
+
 #### 3.4.2 Shape reuse (`type: <object_shape_name>`)
 
 An `object` (or a nested object field) may reuse the fields of a declared

@@ -2459,6 +2459,75 @@ params:
 }
 
 #[test]
+fn json_list_of_objects_partial_uses_shape_field_default() {
+    // E5 regression: when the object_shape DOES declare a field-level
+    // `def`, a list element missing that field must fall back to the
+    // shape's declared default, not the type-appropriate zero. Previously
+    // `etype` reference sites never received the shape's field defaults at
+    // all (only `type: <name>` reuse did), so this fell back to `0`.
+    let upl = "\
+--
+name: p
+params:
+  server:
+    type: object_shape
+    ofields:
+      host:
+        type: string
+        def: \"localhost\"
+      port:
+        type: number
+        def: 8080
+  servers:
+    type: list
+    etype: server
+    def: []
+--
+{{{for S in SERVERS}}}- [[[S.HOST]]]:[[[S.PORT]]]
+{{{end for}}}
+--
+";
+    let json = r#"{"servers": [{"host": "only-host"}]}"#;
+    let out = build(upl, json).unwrap();
+    assert_eq!(out, "- only-host:8080\n");
+}
+
+#[test]
+fn json_option_single_object_etype_partial_uses_shape_field_default() {
+    // E5 regression for the `option_single`/`option_multi` etype site: a
+    // partially-supplied chosen value falls back to the shape's field
+    // default for the field it omits, so it can still reconstruct and match
+    // a declared `opts` entry.
+    let upl = "\
+--
+name: p
+params:
+  server:
+    type: object_shape
+    ofields:
+      host:
+        type: string
+        def: \"localhost\"
+      port:
+        type: number
+        def: 8080
+  chosen:
+    type: option_single
+    etype: server
+    label: host
+    opts:
+      - { host: \"localhost\", port: 8080 }
+      - { host: \"other\", port: 2 }
+--
+[[[CHOSEN.HOST]]]:[[[CHOSEN.PORT]]]
+--
+";
+    let json = r#"{"chosen": {"host": "localhost"}}"#;
+    let out = build(upl, json).unwrap();
+    assert_eq!(out, "localhost:8080\n");
+}
+
+#[test]
 fn json_option_single_number() {
     let upl = "\
 --
