@@ -226,6 +226,14 @@ impl PromptBuilder {
                         map.insert(k.clone(), self.default_value(&npath, nd));
                     }
                 }
+                // An object-level `def` literal (RFC §3) overrides the
+                // shape's field-level defaults on a per-key basis: a key the
+                // literal declares wins; any key it doesn't mention falls
+                // back to the shape's own default for that field. Nested
+                // object fields merge recursively for the same reason.
+                if let Some(VariableValue::Object(overrides)) = self.prompt.variable_defaults.get(path) {
+                    map = merge_object_default(map, overrides);
+                }
                 VariableValue::Object(map)
             }
             List => {
@@ -1222,6 +1230,30 @@ fn option_match_index(
         }),
         _ => None,
     }
+}
+
+/// Merge an object-level `def` literal's declared fields over a base map of
+/// shape-derived field defaults (RFC §3, E4): a key `overrides` declares
+/// wins; a key it doesn't mention keeps its value from `base`. When both
+/// sides have an object at the same key, they're merged recursively rather
+/// than the override replacing the whole nested object, so a partial nested
+/// override still inherits the rest of that nested shape's field defaults.
+/// `base`'s key order (the shape's declaration order, §4.6.1/§7.3) is
+/// preserved — `IndexMap::insert` on an existing key updates its value
+/// without moving it.
+fn merge_object_default(mut base: ObjectMap, overrides: &ObjectMap) -> ObjectMap {
+    for (k, v) in overrides {
+        match (base.get(k), v) {
+            (Some(VariableValue::Object(base_obj)), VariableValue::Object(override_obj)) => {
+                let merged = merge_object_default(base_obj.clone(), override_obj);
+                base.insert(k.clone(), VariableValue::Object(merged));
+            }
+            _ => {
+                base.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    base
 }
 
 fn maps_equal(a: &ObjectMap, b: &ObjectMap) -> bool {

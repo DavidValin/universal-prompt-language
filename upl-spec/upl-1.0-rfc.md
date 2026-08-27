@@ -105,6 +105,8 @@ Variables are declared under the `params` block. Each variable has the following
 
 These fallbacks are also used to synthesize missing nested fields when rendering with defaults.
 
+An `object`/`object_shape`-typed variable may declare **both** an object-level `def` literal and, on its own `ofields` (or the `ofields` of the `object_shape` it reuses via `type: <name>`, §3.4.2), field-level `def`s for individual fields. When both are present, the object-level literal wins **per key**: a field the literal declares takes its value from the literal; a field the literal doesn't mention falls back to that field's own `def` (or its type-appropriate zero value if it has none). This merge is recursive — a nested object field within the literal is itself merged the same way against that nested field's own defaults, rather than replacing the whole nested object wholesale. For example, given a `philosopher` shape whose fields default to `name: "Socrates"` and `era: -470`, declaring `focal: type: philosopher, def: { name: "Plato" }` yields `{ name: "Plato", era: -470 }` — `name` from the literal, `era` from the shape.
+
 ### 3.1 Supported Variable Types
 
 All type names are **lowercase**.

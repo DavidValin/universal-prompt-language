@@ -1390,11 +1390,9 @@ Host: [[[CFG.HOST]]] Port: [[[CFG.PORT]]]
 
 #[test]
 fn integration_object_type_ref_with_def() {
-    // An inheriting object's top-level object-literal `def` is NOT honored by
-    // `render_with_defaults` (object defs are checked for kind only, RFC §3.3;
-    // only field-level `def`s are used at render time). The inherited field
-    // defaults therefore win. (To override a field default, declare the object
-    // with inline `ofields` instead of inheriting.)
+    // An inheriting object's top-level object-literal `def` (RFC §3, E4)
+    // overrides the shape's field-level defaults for the keys it declares;
+    // here it declares both fields, so both are overridden.
     let upl = "\
 --
 name: p
@@ -1417,7 +1415,74 @@ Host: [[[CFG.HOST]]] Port: [[[CFG.PORT]]]
 ";
     let prompt = parse(upl);
     let out = PromptBuilder::new(prompt).render_with_defaults().unwrap();
-    assert_eq!(out, "Host: localhost Port: 8080\n");
+    assert_eq!(out, "Host: db.local Port: 5432\n");
+}
+
+#[test]
+fn integration_object_type_ref_with_partial_def_falls_back_per_field() {
+    // A key the object-literal `def` doesn't mention keeps the shape's
+    // field-level default for that key (E4).
+    let upl = "\
+--
+name: p
+params:
+  host:
+    type: object_shape
+    ofields:
+      host:
+        type: string
+        def: \"localhost\"
+      port:
+        type: number
+        def: 8080
+  cfg:
+    type: host
+    def: { host: \"db.local\" }
+--
+Host: [[[CFG.HOST]]] Port: [[[CFG.PORT]]]
+--
+";
+    let prompt = parse(upl);
+    let out = PromptBuilder::new(prompt).render_with_defaults().unwrap();
+    assert_eq!(out, "Host: db.local Port: 8080\n");
+}
+
+#[test]
+fn integration_object_def_literal_merges_recursively_into_nested_object_field() {
+    // A nested object field within an object-level `def` literal merges
+    // recursively against that nested field's own shape defaults, rather
+    // than replacing the whole nested object wholesale (E4).
+    let upl = "\
+--
+name: p
+params:
+  address:
+    type: object_shape
+    ofields:
+      city:
+        type: string
+        def: \"Athens\"
+      zip:
+        type: string
+        def: \"00000\"
+  philosopher:
+    type: object_shape
+    ofields:
+      name:
+        type: string
+        def: \"Socrates\"
+      home:
+        type: address
+  focal:
+    type: philosopher
+    def: { name: \"Plato\", home: { city: \"Rome\" } }
+--
+[[[FOCAL.NAME]]] from [[[FOCAL.HOME.CITY]]] [[[FOCAL.HOME.ZIP]]]
+--
+";
+    let prompt = parse(upl);
+    let out = PromptBuilder::new(prompt).render_with_defaults().unwrap();
+    assert_eq!(out, "Plato from Rome 00000\n");
 }
 
 #[test]
