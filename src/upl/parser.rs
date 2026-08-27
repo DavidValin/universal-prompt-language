@@ -207,6 +207,8 @@ pub enum PromptParseError {
     InvalidOfieldsForType { type_name: String },
     #[error("'object_shape' variable '{name}' requires an 'ofields' block")]
     ObjectShapeMissingOfields { name: String },
+    #[error("'{name}' is a built-in type name and is reserved; it cannot be used as an 'object_shape' name, since `type: {name}`/`etype: {name}` would always resolve to the built-in type instead of this shape")]
+    ReservedObjectShapeName { name: String },
     #[error("List/option variable '{path}' has etype 'object' but no 'ofields' block; an inline object element shape must declare its fields")]
     MissingOfieldsForObjectEtype { path: String },
     #[error("Invalid value for 'def': {value} (expected type: {expected_type:?})")]
@@ -1115,6 +1117,21 @@ impl PromptParser {
         // reuse a shape via `type: <name>` — that form is for `object` only).
         if def.r#type == ObjectShape && def.ofields_definitions.is_none() {
             return Err(PromptParseError::ObjectShapeMissingOfields {
+                name: path.to_string(),
+            });
+        }
+
+        // Built-in type names are reserved and cannot be used as an
+        // `object_shape`'s own name (RFC §3.3, §3.4.2, E9): `type: <name>`/
+        // `etype: <name>` resolution (above) always tries a built-in type
+        // keyword first, so a shape named e.g. `string` would be permanently
+        // unreferenceable by any `type: string`/`etype: string` — silently
+        // shadowed rather than spliced in. Reject it at declaration instead
+        // of leaving a confusing, never-usable shape. Only a bare (i.e.
+        // top-level) name collides in this sense; `path` is dotted for
+        // nested fields, which can never equal a bare keyword.
+        if def.r#type == ObjectShape && Self::parse_type(path, "name").is_ok() {
+            return Err(PromptParseError::ReservedObjectShapeName {
                 name: path.to_string(),
             });
         }

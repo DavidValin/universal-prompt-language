@@ -1708,3 +1708,91 @@ fn test_omitted_leading_delimiter_still_parses() {
     assert_eq!(prompt.prompt, "Body text.\n");
 }
 
+// --- Built-in type names are reserved for object_shape names (RFC §3.3/§3.4.2, E9) ---
+
+#[test]
+fn test_object_shape_named_after_builtin_type_is_error() {
+    // E9 regression: an object_shape named e.g. 'string' used to parse
+    // without complaint, but was permanently unreferenceable — any
+    // `type: string`/`etype: string` always resolves to the built-in type
+    // first, so the shape could never actually be used. Now rejected at
+    // declaration.
+    let content = r#"--
+name: p
+params:
+  string:
+    type: object_shape
+    ofields:
+      value:
+        type: string
+        def: "hello"
+  x:
+    type: string
+    def: "hi"
+--
+[[[X]]]
+"#;
+    let res = PromptParser::parse(content);
+    assert!(
+        matches!(res, Err(PromptParseError::ReservedObjectShapeName { .. })),
+        "{:?}",
+        res
+    );
+}
+
+#[test]
+fn test_object_shape_named_after_each_builtin_type_is_error() {
+    for kw in [
+        "string",
+        "long_string",
+        "number",
+        "boolean",
+        "list",
+        "object",
+        "object_shape",
+        "option_single",
+        "option_multi",
+    ] {
+        let content = format!(
+            "--\nname: p\nparams:\n  {kw}:\n    type: object_shape\n    ofields:\n      v:\n        type: string\n--\nbody\n"
+        );
+        let res = PromptParser::parse(&content);
+        assert!(
+            matches!(res, Err(PromptParseError::ReservedObjectShapeName { .. })),
+            "expected '{kw}' to be rejected as an object_shape name: {:?}",
+            res
+        );
+    }
+}
+
+#[test]
+fn test_object_shape_with_normal_name_still_parses() {
+    let content = r#"--
+name: p
+params:
+  server:
+    type: object_shape
+    ofields:
+      host:
+        type: string
+        def: "localhost"
+  cfg:
+    type: server
+--
+Host: [[[CFG.HOST]]]
+"#;
+    let prompt = PromptParser::parse(content).expect("should parse");
+    assert!(prompt.variable_definitions.get("cfg").is_some());
+}
+
+#[test]
+fn test_plain_variable_named_after_builtin_type_still_parses() {
+    // The reservation applies only to `object_shape` names — a plain
+    // `string`-typed variable named e.g. 'list' causes no shadowing
+    // ambiguity (it's never referenced *by name* as a type) and remains
+    // allowed.
+    let content = "--\nname: p\nparams:\n  list:\n    type: string\n    def: \"hi\"\n--\n[[[LIST]]]\n";
+    let prompt = PromptParser::parse(content).expect("should parse");
+    assert!(prompt.variable_definitions.get("list").is_some());
+}
+
