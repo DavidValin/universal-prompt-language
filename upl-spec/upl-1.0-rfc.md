@@ -87,7 +87,7 @@ Variables are declared under the `params` block. Each variable has the following
 | `etype`        | Conditional | `list`, `option_single`, `option_multi`     | Element type: a built-in type name (§3.1) — including the inline `object` (the variable then declares its element shape via its own `ofields`) — or the name of a declared `object_shape` variable (§3.4). Not allowed on `object`/`object_shape` (an object's shape is described by `ofields`). For `option_single` it is **optional** and defaults to `string`; for `option_multi` it is **required**. The allowed etypes for `option_single`/`option_multi` are `string`, `long_string`, `number`, the inline `object`, and a referenced `object_shape` (§3.4). `boolean`, `list`, `option_single`, `option_multi`, and `object_shape` (the literal type name) are not valid option etypes. The allowed etypes for `list` are `string`, `long_string`, `number`, `boolean`, the inline `object`, and a referenced `object_shape` (§3.4); `list`, `option_single`, `option_multi`, and `object_shape` (the literal type name) are not valid list etypes. |
 | `ofields`      | Conditional | `object`, `object_shape`                    | Map of object field definitions (recursive). Required on `object_shape`; on `object` either `ofields` (inline) or `type: <object_shape_name>` (§3.4.2) must be present, but not both.  |
 | `label`        | No          | `option_single`, `option_multi`             | Required whenever `etype` is object-shaped — the inline `object` etype or a referenced `object_shape` alike: the field name (declared on that shape) whose value is shown as the menu label for each option. Not allowed for scalar etypes. |
-| `exclude_condition` | No          | All top-level except `object_shape`         | A build-time condition expression (§5 syntax) that controls whether the parameter is **shown** or **hidden** during the build. When the condition evaluates to a **truthy** value, the parameter is **hidden** (excluded from the build — skipped during interactive collection and rejected if supplied via JSON). When the condition is **falsy** (or absent), the parameter is **shown** (asked) normally. A condition may only reference parameters declared *before* the one carrying it (see §3.7). |
+| `exclude_condition` | No          | All top-level except `object_shape`         | A build-time condition expression (§5 syntax) that controls whether the parameter is **shown** or **hidden** during the build. When the condition evaluates to a **truthy** value, the parameter is **hidden** (excluded from the build — not collected, and no override for it accepted, by any value-supply mechanism). When the condition is **falsy** (or absent), the parameter is **shown** (collected normally). A condition may only reference parameters declared *before* the one carrying it (see §3.7). |
 
 `def` is **optional** for every type. When `def` is omitted (and no value is supplied interactively or programmatically), the variable falls back to a type-appropriate default:
 
@@ -414,15 +414,19 @@ In the menu, the two options are shown as `auth` and `logs` (the values of the `
 
 A top-level parameter may declare an `exclude_condition` — a condition expression
 (evaluated with the operators in §5) that controls whether the parameter is
-**shown** or **hidden** during the build:
+**shown** or **hidden** during the build. "Shown"/"hidden" describe the
+parameter's *value-collection status*, independent of however a given
+implementation supplies values to a build (interactively, programmatically,
+or by any other host-defined mechanism — that mechanism's own contract is
+outside this specification's scope; only its interaction with
+`exclude_condition` is normative here):
 
 - **Condition is truthy → parameter is hidden.** The parameter is excluded
-  from the build: it is skipped during interactive collection (its declared
-  `def` default is used) and, if building from JSON, supplying a non-null value
-  for it is a build error.
+  from the build: its declared `def` default is used, and no override for
+  it is collected or accepted by any means while it remains hidden.
 - **Condition is falsy (or no `exclude_condition` is declared) → parameter is shown.**
-  The parameter is asked normally during interactive collection and accepted
-  from JSON as usual.
+  The parameter is collected normally, by whatever mechanism the
+  implementation uses to gather values.
 
 The condition expression uses the same syntax as body conditions (§5) and
 references top-level parameters by their bare, **uppercase** name (e.g.
@@ -467,8 +471,7 @@ Rules:
 - Variable references in a condition MUST be uppercase (§4.1) and MUST name a
   previously-declared top-level parameter.
 - A parameter hidden by its condition still receives its `def` default value
-  for rendering — it is simply not prompted for interactively and cannot be
-  overridden via JSON.
+  for rendering — it is simply not collected, by any means, while hidden.
 - The condition expression is parsed and validated at parse time (§9 step 5a).
 
 ---
@@ -1275,6 +1278,7 @@ An implementation conforms to this standard if it:
   escapes for literal delimiter text (§4.5).
 - Supports the `exclude_condition` field on top-level parameters (§3.7): parses and
    validates condition expressions at parse time (§9 step 5a), evaluates them at
-  build time to hide (exclude) parameters whose condition is truthy, and
-  rejects non-null values for hidden parameters supplied via JSON.
+  build time to hide (exclude) parameters whose condition is truthy, and rejects
+  any external override for a hidden parameter, regardless of the value-supply
+  mechanism.
 - Reports errors as described in §9.
