@@ -1,7 +1,7 @@
 # UPL — Universal Prompt Language
 
-* **Version:** 1.0-rc.3
-* **Status:** Official Standard Specification
+* **Version:** 1.0-rc.4
+* **Status:** Release Candidate
 * **File Extension:** `.txt` or `.upl`
 
 ---
@@ -13,7 +13,7 @@ The **Universal Prompt Language (UPL)** is a human-readable language for authori
 UPL is designed to be:
 
 - **Human-readable** — plain text, easy to author and review.
-- **Self-contained** — the upl prompt defined the complete list of parameters and the prompt body and its rendering logic
+- **Self-contained** — the UPL prompt defines the complete list of parameters, the prompt body, and its rendering logic.
 - **Strictly typed** — every variable has an explicit type, validated at parse and render time.
 - **Safe** — only the `[[[` and `{{{` delimiters trigger expansion; unmatched blocks are ignored,
   so code snippets containing similar-looking sequences are not misinterpreted.
@@ -26,7 +26,7 @@ UPL is designed to be:
 ## 2. File Format
 
 A UPL file is a plain text file with the `.txt` or `.upl` extension. No other
-extension is permitted. It is divided into two or three sections separated by a line containing exactly `--`:
+extension is permitted. It has two sections — metadata and body — separated by a line containing exactly `--`; the body may optionally end with a line of its own `--` (a delimiter, not a third section):
 
 ```text
 [--; optional]
@@ -55,6 +55,10 @@ All values are **case-sensitive**. Variable and field *declarations* in `params`
 | `source`          | No       | Provenance field, `<host>/<username>/<prompt_name>`, injected automatically when a prompt is pulled from a UPL repository. Authoring tools SHOULD NOT set it by hand; it is informational and does not affect parsing or rendering. |
 | `params`          | Yes      | Map of variable declarations (see §3).                                 |
 
+`title`, `desc`, and `source` are taken **verbatim**: everything after the `key:` prefix, trimmed of surrounding whitespace only, becomes the value with no quote-stripping or escape processing. Consequently these fields are written **bare** (unquoted) in examples throughout this document — `desc: An example prompt`, not `desc: "An example prompt"`. Wrapping a value in quotes is not an error, but the quote characters become part of the stored value, since they are not stripped. This differs from `def:` literals (§3.3.1), which do use quotes to delimit a string and strip them.
+
+`params` MUST be the **last** metadata field. A parser locates the end of the `params` block purely by indentation (there is no other terminator), so any metadata key written after it is not recognized as metadata — it is read as part of the prompt body instead, along with everything up to the next `--`. Declare `title`/`desc`/`source` (if present) before `params`.
+
 ### 2.2 Example Skeleton
 
 ```text
@@ -81,7 +85,7 @@ Variables are declared under the `params` block. Each variable has the following
 | Field          | Required    | Applies to                                  | Description                                   |
 |----------------|-------------|---------------------------------------------|-----------------------------------------------|
 | `type`         | Yes         | All                                         | One of the types listed in §3.1.              |
-| `desc`         | No          | All                                         | Optional human-readable description.          |
+| `desc`         | No          | All                                         | Optional human-readable description. Taken verbatim, like the metadata fields (§2.1) — written bare/unquoted. |
 | `def`          | No          | All                                         | Default value used when no value is supplied. For `object_shape`, the declared `def`/field defaults are applied at every site that references the object_shape. |
 | `opts`         | No          | `option_single`, `option_multi`             | List of allowed options. Each entry must match the variable's `etype` (§3.3). |
 | `etype`        | Conditional | `list`, `option_single`, `option_multi`     | Element type: a built-in type name (§3.1) — including the inline `object` (the variable then declares its element shape via its own `ofields`) — or the name of a declared `object_shape` variable (§3.4). Not allowed on `object`/`object_shape` (an object's shape is described by `ofields`). For `option_single` it is **optional** and defaults to `string`; for `option_multi` it is **required**. The allowed etypes for `option_single`/`option_multi` are `string`, `long_string`, `number`, the inline `object`, and a referenced `object_shape` (§3.4). `boolean`, `list`, `option_single`, `option_multi`, and `object_shape` (the literal type name) are not valid option etypes. The allowed etypes for `list` are `string`, `long_string`, `number`, `boolean`, the inline `object`, and a referenced `object_shape` (§3.4); `list`, `option_single`, `option_multi`, and `object_shape` (the literal type name) are not valid list etypes. |
@@ -120,15 +124,16 @@ All type names are **lowercase**.
 | `list`           | List of free entered values                     | **Yes**                              | No                 | No               |
 | `object`         | Struct-like object with named fields. Asked to the user as a parameter in declaration order. | No  | **Yes** (or `type: <object_shape>`) | No  |
 | `object_shape`   | Reusable object shape (same fields as `object`). **Not** asked to the user at its definition site; only asked where it is referenced. | No | **Yes** | No |
-| `option_single`  | Single choice from a list of options           | Yes (optional, defaults to `string`) | No                 | **Yes** (≥ 2)    |
+| `option_single`  | Single choice from a list of options           | No — optional, defaults to `string`  | No                 | **Yes** (≥ 2)    |
 | `option_multi`   | Multiple choices from a list of options        | **Yes**                              | No                 | **Yes** (≥ 2)    |
 
 > A `long_string` variable also accepts a heredoc form for `def` (see §3.5).
 
 > The `etype` of an `option_single`/`option_multi` may be `string`,
-> `long_string`, `number`, or the name of a declared `object_shape` variable
-> (§3.4). `boolean` is not a valid option etype. When `etype` is a
-> referenced object_shape, the `label` field is **required** (§3.6).
+> `long_string`, `number`, the inline `object` (with its own `ofields`), or
+> the name of a declared `object_shape` variable (§3.4). `boolean` is not a
+> valid option etype. Whenever `etype` is object-shaped — inline or a
+> referenced object_shape alike — the `label` field is **required** (§3.6).
 
 > `object_shape` and `object` both describe an object shape via `ofields`, but
 > differ in how they are presented to the user at build time: an `object` is a
@@ -345,6 +350,7 @@ at any indentation
 - The block ends at the first line whose trimmed content is exactly `<<<`. That terminator line is consumed and is not part of the value.
 - If the end of file is reached before a `<<<` terminator, parsing fails with an error.
 - The heredoc form is **only** valid for `long_string` variables. Using it on any other type is a parse error.
+- `type: long_string` MUST be declared **before** `def: >>>` within the variable's block. The heredoc check runs against whatever type has been parsed so far, so `def: >>>` appearing first (before `type:` has been seen) fails with the same error as using it on a non-`long_string` type, even though the variable is a `long_string` overall.
 
 The collected lines are joined with `\n` to form the default value; the newline that precedes the `<<<` terminator is not included, so the value is exactly the text between `>>>` and `<<<`.
 
@@ -451,7 +457,7 @@ params:
 
   visa_card_expiry_date:
     type: string
-    desc: "Expiry date for Visa card"
+    desc: Expiry date for Visa card
     exclude_condition: CREDIT_CARD_TYPE != "visa"
     def: "12/25"
 ```
@@ -710,8 +716,10 @@ A loop iterates over a list-valued variable — i.e. a `list` variable or an `op
 ```
 
 - `{{{for <ITEM> in <LIST>}}}` opens the loop. `<ITEM>` is the loop variable
-  binding and MUST be uppercase; `<LIST>` is a bare variable reference (also
-  uppercase) — it is written without `[[[...]]]` wrapping, since `[[[...]]]`
+  binding and MUST be uppercase; `<LIST>` may be any (all-uppercase) dotted
+  path that resolves to a list — a bare variable name (`ENDPOINTS`), a
+  nested field (`MODEL.ITEMS`), or a projected list (`MODEL.FIELDS.NAME`,
+  §4.1.5) — written without `[[[...]]]` wrapping, since `[[[...]]]`
   is reserved for printing values into the prompt body. For backward
   compatibility, `[[[VAR]]]` wrapping is still tolerated and stripped.
 - `{{{end for}}}` closes the loop.
@@ -720,7 +728,7 @@ A loop iterates over a list-valued variable — i.e. a `list` variable or an `op
 
 ### 4.4 If Blocks (Conditional Blocks)
 
-A conditional block renders its content only when the condition is **truthy** (see §4.6.2 for the truthiness rules). The condition variable MUST be uppercase and is written **bare** (without `[[[...]]]` wrapping), exactly as in ternary conditions (§4.2).
+A conditional block renders its content only when the condition is **truthy** (see §4.6.2 for the truthiness rules). The condition may be any expression from §5 — a bare variable, a comparison, a string test, or a combination using `and`/`or`/`not` and parentheses (§5.1, §5.2) — written exactly as in a ternary condition (§4.2): bare, uppercase variable references, without `[[[...]]]` wrapping.
 
 ```text
 {{{if INCLUDE_AUTH}}}
@@ -808,7 +816,7 @@ Done.
 
 ## 5. Condition Operators
 
-All binary operators are **left-associative** (the ternary `? :` is right-associative — see §5.2); `!` and `not` are prefix unary operators. Type checking is enforced at runtime; for example, comparing a number to a string fails evaluation. String literals may use either single (`'...'`) or double (`"..."`) quotes interchangeably. Variables in conditions are referenced by their **bare, uppercase** name (e.g. `A`, `FLAG`, `TAGS`) — **not** wrapped in `[[[...]]]`, which is reserved for placeholders in the prompt body (§4.1) and ternary branch value references.
+All binary operators are **left-associative**; `!` and `not` are prefix unary operators. The ternary `? :` (§5.2) is neither — its branches are plain values, not nested conditions, so it doesn't chain and associativity doesn't apply to it (see §5.2). Type checking is enforced at runtime; for example, comparing a number to a string fails evaluation. String literals may use either single (`'...'`) or double (`"..."`) quotes interchangeably. Variables in conditions are referenced by their **bare, uppercase** name (e.g. `A`, `FLAG`, `TAGS`) — **not** wrapped in `[[[...]]]`, which is reserved for placeholders in the prompt body (§4.1) and ternary branch value references.
 
 | Operator        | Meaning                              | Example                             |
 |-----------------|--------------------------------------|-------------------------------------|
@@ -865,9 +873,9 @@ From highest to lowest precedence:
 5. `not` (unary NOT, binds to the comparison/equality/string-operator expression that follows)
 6. `and`
 7. `or`
-8. `? :` ternary (right-associative)
+8. `? :` ternary (lowest precedence)
 
-The ternary remains the lowest-precedence operator. Note: branches of a ternary are plain values (a `[[[VAR]]]` reference, a quoted string, a bare number/boolean, or literal text); **nested ternaries are not supported** inside ternary branches — this is unaffected by `and`/`or`/`not`/parentheses, which apply only to the condition itself.
+The ternary remains the lowest-precedence operator. Note: branches of a ternary are plain values (a `[[[VAR]]]` reference, a quoted string, a bare number/boolean, or literal text); **nested ternaries are not supported** inside ternary branches — this is unaffected by `and`/`or`/`not`/parentheses, which apply only to the condition itself. It is not associative (there is nothing to associate — see above), so writing a second `? :` inside a branch does not chain into a nested conditional; that text is treated as part of the plain-value branch and rendered **literally**, verbatim, whichever branch is taken. For example, `{{{A = "x" ? "one" : A = "y" ? "two" : "three"}}}` with `A = "z"` renders the literal text `A = "y" ? "two" : "three"`, not an evaluated nested ternary.
 
 ```text
 {{{if (TIER = "pro" or TIER = "enterprise") and not SUSPENDED}}}
@@ -901,7 +909,7 @@ Full access enabled.
 | `{{{if <COND>}}}<content>{{{end if}}}` conditional blocks               | Yes       |
 | Complex conditionals with variables and literals                        | Yes       |
 | Runtime type checking during evaluation                                 | Yes       |
-| Code snippets containing `[[[...]]` sequences                           | Yes       |
+| Code snippets containing an unmatched, near-miss sequence like `[[[...]]` (two closing brackets, not three — deliberately not a valid placeholder) | Yes       |
 | Recursive object definitions (objects inside objects)                   | Yes       |
 | `source` provenance metadata field (§2.1)                               | Yes       |
 | Build-time `exclude_condition` on parameters (§3.7)                     | Yes       |
@@ -964,9 +972,11 @@ A condition is represented as an expression tree:
 
 | Field            | Type       | Description                                                                   |
 |------------------|------------|-------------------------------------------------------------------------------|
-| `item_name`      | string     | Name of the loop variable.                                                    |
-| `list_variable`  | string     | Name of the list-valued variable being iterated (a `list` or `option_multi`). |
+| `item`           | string     | Name of the loop variable.                                                    |
+| `list`           | string     | Name of the list-valued variable being iterated (a `list` or `option_multi`, possibly a dotted path — §4.3, §6). |
 | `body`           | list<Node> | Body nodes rendered once per element (see §7.6).                              |
+
+(Matches the `Loop { item, list, body }` `Node` variant in §7.6 exactly — this is the same node, described here at the field level.)
 
 ### 7.6 Template / Node
 
