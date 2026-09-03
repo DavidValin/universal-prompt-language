@@ -1364,6 +1364,17 @@ params:
 }
 
 #[test]
+fn test_empty_def_on_list_is_empty_list() {
+    // `def:` with no value on a list used to be stored as "" and then
+    // rejected with a confusing type-mismatch error.
+    let content = "--\nname: p\nparams:\n  xs:\n    type: list\n    etype: string\n    def:\n  om:\n    type: option_multi\n    etype: string\n    opts:\n      - \"a\"\n      - \"b\"\n    def:\n--\n[[[XS]]] [[[OM]]]\n";
+    let prompt = PromptParser::parse(content).expect("should parse");
+    use universal_prompt_language::upl::parser::VariableValue;
+    assert_eq!(prompt.variable_defaults.get("xs"), Some(&VariableValue::List(vec![])));
+    assert_eq!(prompt.variable_defaults.get("om"), Some(&VariableValue::List(vec![])));
+}
+
+#[test]
 fn test_list_with_boolean_etype_is_ok() {
     // RFC §3.3: `boolean` IS a valid list etype.
     let content = r#"--

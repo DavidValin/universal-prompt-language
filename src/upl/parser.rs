@@ -972,8 +972,16 @@ impl PromptParser {
                                 p += 1;
                             }
                             if items.is_empty() {
-                                defaults
-                                    .insert(var_name.clone(), VariableValue::String(String::new()));
+                                // `def:` with nothing after it: an empty
+                                // list for list-valued types (when `type`
+                                // was declared before `def`), else "".
+                                let empty = match def.r#type {
+                                    VariableType::List | VariableType::OptionMulti => {
+                                        VariableValue::List(Vec::new())
+                                    }
+                                    _ => VariableValue::String(String::new()),
+                                };
+                                defaults.insert(var_name.clone(), empty);
                             } else {
                                 defaults.insert(var_name.clone(), VariableValue::List(items));
                             }
