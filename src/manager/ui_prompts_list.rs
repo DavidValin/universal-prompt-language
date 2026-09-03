@@ -690,7 +690,21 @@ fn run_tui(rows: &[Row], no_history: bool) -> Result<TuiOutcome, ListError> {
 
 /// Entry point for the `list` subcommand. Lists prompts in `folder` (or
 /// `~/.upl/prompts` if `None`), lets the user pick one, and builds it.
+///
+/// Whatever happens inside, the terminal is restored (raw mode off, main
+/// screen back) before an error is returned, so a failure such as a history
+/// record whose prompt file has gone never leaves the shell stuck in the
+/// alternate screen.
 pub fn run(folder: Option<&str>, no_history: bool) -> Result<(), ListError> {
+    let result = run_inner(folder, no_history);
+    if result.is_err() {
+        let _ = terminal::disable_raw_mode();
+        let _ = execute!(io::stderr(), cursor::Show, EnableLineWrap, LeaveAlternateScreen);
+    }
+    result
+}
+
+fn run_inner(folder: Option<&str>, no_history: bool) -> Result<(), ListError> {
     let folder = resolve_folder(folder)?;
     let mut rows = collect_rows(&folder)?;
 
