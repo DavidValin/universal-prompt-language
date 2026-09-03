@@ -757,7 +757,7 @@ impl PromptBuilder {
             Boolean => self.collect_boolean(path, def, default),
             OptionSingle => self.collect_option_single(path, def, default),
             OptionMulti => self.collect_option_multi(path, def, default),
-            Object | ObjectShape => self.collect_object(path, def),
+            Object | ObjectShape => self.collect_object(path, def, default),
             List => self.collect_list(path, def, default),
         }
     }
@@ -998,16 +998,34 @@ impl PromptBuilder {
         Ok(VariableValue::List(chosen))
     }
 
-    fn collect_object(&self, path: &str, def: &VariableDefinition) -> Result<VariableValue, BuilderError> {
+    /// Collect an object's fields in declaration order. Each field's default
+    /// is, in priority order: the field's value in `default` (a previously
+    /// collected/resumed object, so going back keeps the user's answers),
+    /// then the declared `def:` for the field — looked up via
+    /// `lookup_default` so list-element paths (`servers[0].host`) fall back
+    /// to the shape's canonical field defaults (`servers.host`).
+    fn collect_object(
+        &self,
+        path: &str,
+        def: &VariableDefinition,
+        default: Option<&VariableValue>,
+    ) -> Result<VariableValue, BuilderError> {
         let nested = def
             .ofields_definitions
             .as_ref()
             .ok_or_else(|| BuilderError::TypeError(format!("object '{}' has no ofields block", path)))?;
+        let prev = match default {
+            Some(VariableValue::Object(m)) => Some(m),
+            _ => None,
+        };
         let mut map = ObjectMap::new();
         for (k, nd) in nested {
             let npath = format!("{}.{}", path, k);
-            let ndefault = self.prompt.variable_defaults.get(&npath);
-            let v = self.collect_definition(&npath, nd, ndefault)?;
+            let kl = k.to_lowercase();
+            let ndefault = prev
+                .and_then(|m| m.iter().find(|(pk, _)| pk.to_lowercase() == kl).map(|(_, v)| v.clone()))
+                .or_else(|| self.lookup_default(&npath));
+            let v = self.collect_definition(&npath, nd, ndefault.as_ref())?;
             map.insert(k.clone(), v);
         }
         Ok(VariableValue::Object(map))
