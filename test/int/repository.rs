@@ -377,3 +377,31 @@ fn invalid_token_for_push_is_unauthorized() {
     });
     assert!(matches!(resp, Response::Error { code, .. } if code == protocol::err_code::UNAUTHORIZED));
 }
+
+#[test]
+#[ignore = "requires TCP loopback (run with --ignored)"]
+fn username_with_path_segments_is_bad_request() {
+    // `username` is used as a filesystem path component on the server; it
+    // must go through the same name validation as prompt names.
+    let addr = boot_server();
+    register_user("ivan", "pw");
+    let mut client = Client::new(&addr);
+    let token = login(&mut client, "ivan", "pw");
+    client.call(&Request::Push {
+        token,
+        name: "hello".to_string(),
+        visibility: Visibility::Public,
+        content: SAMPLE.as_bytes().to_vec(),
+    });
+    let resp = client.call(&Request::Pull {
+        username: "../prompts/ivan".to_string(),
+        name: "hello".to_string(),
+        version: None,
+        token: None,
+    });
+    assert!(matches!(resp, Response::Error { code, .. } if code == protocol::err_code::BAD_REQUEST), "{resp:?}");
+    let resp = client.call(&Request::LoginStart {
+        username: "../../x".to_string(),
+    });
+    assert!(matches!(resp, Response::Error { code, .. } if code == protocol::err_code::BAD_REQUEST), "{resp:?}");
+}

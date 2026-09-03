@@ -406,6 +406,7 @@ pub fn pull(spec: &str) -> Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
+    validate_name(username).map_err(|e| format!("invalid username: {e}"))?;
     validate_name(name)?;
 
     let cfg = RepConfig::require()?;

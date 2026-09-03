@@ -241,6 +241,12 @@ fn handle_request(
 ) -> Response {
     match req {
         Request::LoginStart { username } => {
+            // The username becomes a path component (cred file, prompt
+            // dir); reject anything outside the name charset up front, as
+            // push/delete already do for prompt names.
+            if let Err(e) = validate_name(&username) {
+                return Response::err(err_code::BAD_REQUEST, format!("invalid username: {e}"));
+            }
             let requires_gpg = Credential::load(&username)
                 .ok()
                 .flatten()
@@ -439,6 +445,9 @@ fn handle_pull(
     version: Option<u32>,
     token: Option<String>,
 ) -> Response {
+    if let Err(e) = validate_name(user) {
+        return Response::err(err_code::BAD_REQUEST, format!("invalid username: {e}"));
+    }
     if let Err(e) = validate_name(name) {
         return Response::err(err_code::BAD_REQUEST, e);
     }
