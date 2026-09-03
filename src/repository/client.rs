@@ -437,12 +437,26 @@ pub fn pull(spec: &str) -> Result<(), Box<dyn std::error::Error>> {
     // This namespaces by host+user so prompts from different repositories
     // or different authors never collide. The flat ~/.upl/prompts/
     // top level is reserved for locally-authored prompts.
-    let dir = prompts_dir()?.join(&cfg.host).join(username);
+    // `host:port` contains ':' which is not a legal directory name on
+    // Windows; the on-disk namespace uses a filesystem-safe form of the host.
+    let dir = prompts_dir()?.join(host_dir_name(&cfg.host)).join(username);
     fs::create_dir_all(&dir)?;
     let out = dir.join(format!("{name}.txt"));
     fs::write(&out, injected.as_bytes())?;
     eprintln!("pulled '{name}' version {version} -> {}", out.display());
     Ok(())
+}
+
+/// Filesystem-safe directory name for a repository host (`host:port`):
+/// characters that are illegal in file names on some platforms (`:` in
+/// particular) are replaced with `_`.
+pub fn host_dir_name(host: &str) -> String {
+    host.chars()
+        .map(|c| match c {
+            ':' | '/' | '\\' | '<' | '>' | '"' | '|' | '?' | '*' => '_',
+            c => c,
+        })
+        .collect()
 }
 
 /// Insert a `source:` header field into a UPL document. The header begins
