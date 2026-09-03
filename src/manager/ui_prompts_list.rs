@@ -91,19 +91,23 @@ pub fn resolve_folder(folder: Option<&str>) -> Result<PathBuf, ListError> {
 /// Top-level files are treated as locally-authored prompts (repository =
 /// "none"). Files nested under `<host>/<user>/<name>.txt` (the layout used by
 /// `upl pull`) are tagged with the `<host>` as their repository.
-fn collect_rows(folder: &Path) -> Result<Vec<Row>, ListError> {
+///
+/// Files that fail to parse are not silently dropped: their error messages
+/// are returned alongside the rows so the browser can report them.
+fn collect_rows(folder: &Path) -> Result<(Vec<Row>, Vec<String>), ListError> {
     let mut rows = Vec::new();
-    let mut first_error: Option<ListError> = None;
-    collect_rows_recursive(folder, folder, &mut rows, &mut first_error)?;
+    let mut errors: Vec<String> = Vec::new();
+    collect_rows_recursive(folder, folder, &mut rows, &mut errors)?;
 
     rows.sort_by(|a, b| a.name.cmp(&b.name));
 
     if rows.is_empty() {
-        return Err(first_error.unwrap_or_else(|| {
-            ListError::NoPrompts(folder.display().to_string())
-        }));
+        return Err(match errors.into_iter().next() {
+            Some(msg) => ListError::Tui(msg),
+            None => ListError::NoPrompts(folder.display().to_string()),
+        });
     }
-    Ok(rows)
+    Ok((rows, errors))
 }
 
 /// Recursive helper. `root` is the top-level prompts folder; `dir` is the
@@ -115,13 +119,13 @@ fn collect_rows_recursive(
     root: &Path,
     dir: &Path,
     rows: &mut Vec<Row>,
-    first_error: &mut Option<ListError>,
+    errors: &mut Vec<String>,
 ) -> Result<(), ListError> {
     let entries = fs::read_dir(dir)?;
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            collect_rows_recursive(root, &path, rows, first_error)?;
+            collect_rows_recursive(root, &path, rows, errors)?;
             continue;
         }
         if !path.is_file() {
@@ -156,11 +160,7 @@ fn collect_rows_recursive(
                 sha256: ui_tags::sha256(&content),
                 repository,
             }),
-            Err(e) => {
-                if first_error.is_none() {
-                    *first_error = Some(e);
-                }
-            }
+            Err(e) => errors.push(e.to_string()),
         }
     }
     Ok(())
@@ -314,6 +314,7 @@ fn render_list<W: Write>(
     cols: u16,
     lines: u16,
     no_history: bool,
+    broken: usize,
 ) -> io::Result<(usize, usize)> {
     // Filter rows by selected tags (AND: a row matches only if it has every
     // selected tag).
@@ -372,6 +373,13 @@ fn render_list<W: Write>(
         Print("UPL Prompts"),
         ResetColor,
         SetAttribute(Attribute::Reset),
+        SetForegroundColor(Color::Red),
+        Print(if broken > 0 {
+            format!("   ({broken} file(s) failed to parse and are not listed; details are printed on exit)")
+        } else {
+            String::new()
+        }),
+        ResetColor,
         cursor::MoveTo(0, sep1_y),
         SetForegroundColor(Color::DarkGrey),
         Print(&"─".repeat(sep_width)),
@@ -480,7 +488,7 @@ enum TuiOutcome {
 
 /// Run the interactive list TUI. Returns the path of the prompt the user
 /// selected with Enter, or `None` if they quit without selecting.
-fn run_tui(rows: &[Row], no_history: bool) -> Result<TuiOutcome, ListError> {
+fn run_tui(rows: &[Row], no_history: bool, broken: usize) -> Result<TuiOutcome, ListError> {
     // Render the TUI on stderr (not stdout) so that stdout stays clean for
     // the final rendered prompt, allowing `upl list > out.txt` to capture
     // the build while the UI is still visible on the terminal.
@@ -521,6 +529,7 @@ fn run_tui(rows: &[Row], no_history: bool) -> Result<TuiOutcome, ListError> {
                 cols,
                 lines,
                 no_history,
+                broken,
             )?;
 
             stdout.flush().map_err(|e| ListError::Tui(e.to_string()))?;
@@ -619,7 +628,7 @@ fn run_tui(rows: &[Row], no_history: bool) -> Result<TuiOutcome, ListError> {
                         ui_tags::run_popup(&mut stdout, &mut selected_tags, &mut store, |out, sel, st, c, l| {
                             render_list(
                                 out, rows, st, sel, &mut selected, &mut top,
-                                longest_title, c, l, no_history,
+                                longest_title, c, l, no_history, broken,
                             )?;
                             Ok(())
                         })?;
@@ -696,17 +705,27 @@ fn run_tui(rows: &[Row], no_history: bool) -> Result<TuiOutcome, ListError> {
 /// record whose prompt file has gone never leaves the shell stuck in the
 /// alternate screen.
 pub fn run(folder: Option<&str>, no_history: bool) -> Result<(), ListError> {
-    let result = run_inner(folder, no_history);
+    let mut broken: Vec<String> = Vec::new();
+    let result = run_inner(folder, no_history, &mut broken);
     if result.is_err() {
         let _ = terminal::disable_raw_mode();
         let _ = execute!(io::stderr(), cursor::Show, EnableLineWrap, LeaveAlternateScreen);
     }
+    // Now that the main screen is back, report the prompt files that were
+    // skipped because they failed to parse.
+    if !broken.is_empty() {
+        eprintln!("warning: {} prompt file(s) failed to parse and were not listed:", broken.len());
+        for msg in &broken {
+            eprintln!("  - {msg}");
+        }
+    }
     result
 }
 
-fn run_inner(folder: Option<&str>, no_history: bool) -> Result<(), ListError> {
+fn run_inner(folder: Option<&str>, no_history: bool, broken: &mut Vec<String>) -> Result<(), ListError> {
     let folder = resolve_folder(folder)?;
-    let mut rows = collect_rows(&folder)?;
+    let (mut rows, errs) = collect_rows(&folder)?;
+    *broken = errs;
 
     loop {
         // Determine what to build — either from the browser or from the
@@ -716,7 +735,7 @@ fn run_inner(folder: Option<&str>, no_history: bool) -> Result<(), ListError> {
             // run_tui enters the alternate screen and leaves it active on
             // return so we can transition straight into the build header
             // without flickering.
-            let choice = run_tui(&rows, no_history);
+            let choice = run_tui(&rows, no_history, broken.len());
             match choice {
                 Ok(TuiOutcome::Selected(row)) => {
                     break (row.path, row.sha256, row.title, None);
@@ -732,7 +751,9 @@ fn run_inner(folder: Option<&str>, no_history: bool) -> Result<(), ListError> {
                     return Ok(());
                 }
                 Ok(TuiOutcome::Reload) => {
-                    rows = collect_rows(&folder)?;
+                    let (r, errs) = collect_rows(&folder)?;
+                    rows = r;
+                    *broken = errs;
                     continue;
                 }
                 Err(e) => {
