@@ -500,7 +500,11 @@ impl PromptBuilder {
                     json_type_name(json)
                 ))),
             },
-            T::Object => match json {
+            // A nested `object_shape` field is collected exactly like a
+            // nested `object` (RFC §3.1); only a *top-level* object_shape is
+            // a pure type definition, and those never reach this function
+            // (`values_from_json` filters them out first).
+            T::Object | T::ObjectShape => match json {
                 J::Object(obj) => {
                     let ofields = def.ofields_definitions.as_ref().ok_or_else(|| {
                         BuilderError::TypeError(format!(
@@ -551,10 +555,6 @@ impl PromptBuilder {
                     json_type_name(json)
                 ))),
             },
-            T::ObjectShape => Err(BuilderError::Validation(format!(
-                "parameter '{}' is an object_shape and cannot be set via JSON",
-                path
-            ))),
         }
     }
 

@@ -2817,6 +2817,34 @@ x
 }
 
 #[test]
+fn json_nested_object_shape_field_is_settable() {
+    // A field declared `type: object_shape` inside an object is collected
+    // like a nested object (RFC §3.1); it used to be rejected via JSON.
+    let upl = "\
+--
+name: p
+params:
+  cfg:
+    type: object
+    ofields:
+      sub:
+        type: object_shape
+        ofields:
+          x:
+            type: string
+            def: \"x\"
+          y:
+            type: string
+            def: \"y\"
+--
+[[[CFG.SUB.X]]][[[CFG.SUB.Y]]]
+--
+";
+    let out = build(upl, r#"{"cfg": {"sub": {"x": "J"}}}"#).unwrap();
+    assert_eq!(out, "Jy\n");
+}
+
+#[test]
 fn json_error_option_single_invalid_value() {
     let upl = "\
 --
