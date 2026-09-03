@@ -522,6 +522,13 @@ fn verify_gpg_signature(pubkey_armored: &str, data: &[u8], signature: &[u8]) -> 
         Ok(t) => t,
         Err(_) => return false,
     };
+    let result = verify_gpg_signature_in(&tmp, pubkey_armored, data, signature);
+    // The throwaway keyring is single-use; don't leave one behind per login.
+    let _ = fs::remove_dir_all(&tmp);
+    result
+}
+
+fn verify_gpg_signature_in(tmp: &Path, pubkey_armored: &str, data: &[u8], signature: &[u8]) -> bool {
     let pubkey_path = tmp.join("pub.asc");
     let data_path = tmp.join("data.bin");
     let sig_path = tmp.join("sig.bin");
