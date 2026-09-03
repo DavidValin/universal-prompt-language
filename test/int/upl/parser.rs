@@ -992,6 +992,29 @@ params:
     assert!(ofields.contains_key("qty"));
 }
 
+// --- Bare literal tokens (RFC §3.3.1) ---
+
+#[test]
+fn test_bare_nan_and_inf_tokens_are_strings() {
+    // Rust's float parser accepts these words, but per §3.3.1 a bare token
+    // that is not a number is a string.
+    for word in ["nan", "NaN", "inf", "infinity", "Infinity", "-inf"] {
+        let content = format!("--\nname: p\nparams:\n  s:\n    type: string\n    def: {word}\n--\n[[[S]]]\n");
+        let prompt = PromptParser::parse(&content).unwrap_or_else(|e| panic!("{word}: {e}"));
+        assert_eq!(
+            prompt.variable_defaults.get("s"),
+            Some(&universal_prompt_language::upl::parser::VariableValue::String(word.to_string()))
+        );
+    }
+    // Real numbers still parse as numbers.
+    let content = "--\nname: p\nparams:\n  n:\n    type: number\n    def: -1.5e3\n--\n[[[N]]]\n";
+    let prompt = PromptParser::parse(content).unwrap();
+    assert_eq!(
+        prompt.variable_defaults.get("n"),
+        Some(&universal_prompt_language::upl::parser::VariableValue::Number(-1500.0))
+    );
+}
+
 // --- Duplicate declarations ---
 
 #[test]

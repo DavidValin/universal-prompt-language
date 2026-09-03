@@ -1560,7 +1560,7 @@ impl PromptParser {
             Ok(VariableValue::Boolean(true))
         } else if s == "false" {
             Ok(VariableValue::Boolean(false))
-        } else if let Ok(num) = s.parse::<f64>() {
+        } else if let Some(num) = Self::parse_number_literal(s) {
             Ok(VariableValue::Number(num))
         } else if s == "{}" {
             Ok(VariableValue::Object(IndexMap::new()))
@@ -1578,6 +1578,19 @@ impl PromptParser {
         } else {
             Ok(VariableValue::String(s.to_string()))
         }
+    }
+
+    /// Parse a bare number literal (RFC §3.3.1). Only tokens that *look*
+    /// numeric qualify — a leading digit, sign, or dot, and a finite value —
+    /// so words Rust's float parser happens to accept (`nan`, `inf`,
+    /// `infinity`) stay plain strings, as the RFC requires for bare tokens
+    /// that are not numbers.
+    fn parse_number_literal(s: &str) -> Option<f64> {
+        let first = s.chars().next()?;
+        if !(first.is_ascii_digit() || first == '-' || first == '+' || first == '.') {
+            return None;
+        }
+        s.parse::<f64>().ok().filter(|n| n.is_finite())
     }
 
     /// Parse a non-empty inline object literal `{ key: value, ... }`. Keys are
