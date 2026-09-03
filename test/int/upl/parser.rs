@@ -1872,6 +1872,13 @@ fn test_leading_triple_dash_is_error() {
 }
 
 #[test]
+fn test_utf8_bom_is_tolerated() {
+    let content = "\u{feff}--\nname: p\nparams:\n  x:\n    type: string\n    def: \"hi\"\n--\nBody text.\n";
+    let prompt = PromptParser::parse(content).expect("BOM should be ignored");
+    assert_eq!(prompt.name, "p");
+}
+
+#[test]
 fn test_exact_leading_delimiter_still_parses() {
     let content = "--\nname: p\nparams:\n  x:\n    type: string\n    def: \"hi\"\n--\nBody text.\n";
     let prompt = PromptParser::parse(content).expect("should parse");

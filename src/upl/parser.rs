@@ -445,6 +445,9 @@ pub struct PromptParser;
 
 impl PromptParser {
     pub fn parse(content: &str) -> Result<Prompt, PromptParseError> {
+        // Tolerate a UTF-8 byte-order mark (some Windows editors emit one);
+        // without this the first header line fails as an unexpected line.
+        let content = content.strip_prefix('\u{feff}').unwrap_or(content);
         let mut ctx = ParseContext {
             line_num: 0,
             content: content.lines().map(|l| l.to_string()).collect(),
