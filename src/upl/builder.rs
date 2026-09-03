@@ -210,7 +210,7 @@ impl PromptBuilder {
             OptionSingle => {
                 let etype = def.element_type.unwrap_or(VariableType::String);
                 if let Some(v) = self.lookup_default(path) {
-                    return v;
+                    return self.fill_element_defaults(path, def, &v);
                 }
                 if let Some(opts) = &def.options {
                     if let Some(first) = opts.first() {
@@ -220,8 +220,10 @@ impl PromptBuilder {
                 option_type_zero(etype)
             }
             OptionMulti => {
-                if let Some(v) = self.lookup_default(path) {
-                    return v;
+                if let Some(VariableValue::List(items)) = self.lookup_default(path) {
+                    return VariableValue::List(
+                        items.iter().map(|e| self.fill_element_defaults(path, def, e)).collect(),
+                    );
                 }
                 VariableValue::List(vec![])
             }
@@ -244,16 +246,44 @@ impl PromptBuilder {
                 VariableValue::Object(map)
             }
             List => {
-                // Honor an inline `def:` list verbatim; otherwise default to
-                // an empty list (RFC §3 — `def` is optional, list falls back
-                // to `[]`). The element type's shape is still declared so the
-                // interactive collector can prompt for items when invoked.
-                if let Some(VariableValue::List(items)) = self.prompt.variable_defaults.get(path)
-                {
-                    return VariableValue::List(items.clone());
+                // Honor an inline `def:` list, filling any field an object
+                // element omits from the element shape's own defaults (RFC
+                // §3.4 / §3.3); otherwise default to an empty list (RFC §3 —
+                // `def` is optional, list falls back to `[]`).
+                if let Some(VariableValue::List(items)) = self.lookup_default(path) {
+                    return VariableValue::List(
+                        items.iter().map(|e| self.fill_element_defaults(path, def, e)).collect(),
+                    );
                 }
                 VariableValue::List(vec![])
             }
+        }
+    }
+
+    /// Complete a list/option element taken from a `def:` literal. For an
+    /// object-shaped element, every field the literal doesn't mention falls
+    /// back to the element shape's field default (RFC §3.4: "any field the
+    /// element's value doesn't mention falls back to the shape's own field
+    /// default"), merged recursively like an object-level `def`. Scalar
+    /// elements are returned unchanged.
+    fn fill_element_defaults(
+        &self,
+        path: &str,
+        def: &VariableDefinition,
+        elem: &VariableValue,
+    ) -> VariableValue {
+        let is_object_etype =
+            def.element_type == Some(VariableType::Object) || def.element_ref.is_some();
+        match (is_object_etype, elem, &def.ofields_definitions) {
+            (true, VariableValue::Object(overrides), Some(ofields)) => {
+                let mut base = ObjectMap::new();
+                for (k, nd) in ofields {
+                    let npath = format!("{}.{}", path, k);
+                    base.insert(k.clone(), self.default_value(&npath, nd));
+                }
+                VariableValue::Object(merge_object_default(base, overrides))
+            }
+            _ => elem.clone(),
         }
     }
 

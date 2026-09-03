@@ -1179,6 +1179,73 @@ Hosts:
 }
 
 #[test]
+fn integration_list_def_partial_elements_use_shape_field_defaults() {
+    // RFC §3.4: a list element supplied only partially (here via `def:`)
+    // falls back to the shape's field default for the fields it omits —
+    // the same as the JSON path already did.
+    let upl = "\
+--
+name: p
+params:
+  host:
+    type: object_shape
+    ofields:
+      host:
+        type: string
+        def: \"localhost\"
+      port:
+        type: number
+        def: 8080
+  servers:
+    type: list
+    etype: host
+    def:
+      - { host: \"only\" }
+      - { port: 1 }
+--
+{{{for S in SERVERS}}}- [[[S.HOST]]]:[[[S.PORT]]]
+{{{end for}}}
+--
+";
+    let out = PromptBuilder::new(parse(upl)).render_with_defaults().unwrap();
+    assert_eq!(out, "- only:8080\n- localhost:1\n");
+}
+
+#[test]
+fn integration_list_def_partial_elements_inline_object_etype() {
+    // Same rule for an inline `etype: object` element shape, including a
+    // nested object field merged recursively.
+    let upl = "\
+--
+name: p
+params:
+  items:
+    type: list
+    etype: object
+    ofields:
+      name:
+        type: string
+        def: \"n\"
+      meta:
+        type: object
+        ofields:
+          qty:
+            type: number
+            def: 1
+          unit:
+            type: string
+            def: \"kg\"
+    def:
+      - { name: \"a\", meta: { qty: 5 } }
+--
+{{{for I in ITEMS}}}[[[I.NAME]]]=[[[I.META.QTY]]][[[I.META.UNIT]]]{{{end for}}}
+--
+";
+    let out = PromptBuilder::new(parse(upl)).render_with_defaults().unwrap();
+    assert_eq!(out, "a=5kg");
+}
+
+#[test]
 fn integration_element_ref_forward_declaration() {
     // The list is declared before the object it references.
     let upl = "\
