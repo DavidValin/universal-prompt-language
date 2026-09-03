@@ -36,10 +36,21 @@ params:
     def: "John"
     desc: "User name"
 --
-Hello, [[name]]!
+Hello, [[[NAME]]]!
 "#;
-    let result = PromptParser::parse(content);
-    assert!(result.is_ok());
+    let prompt = PromptParser::parse(content).expect("should parse");
+    assert_eq!(prompt.name, "test");
+    assert_eq!(prompt.title.as_deref(), Some("Test"));
+    assert_eq!(prompt.desc.as_deref(), Some("A test prompt"));
+    let name = prompt.variable_definitions.get("name").expect("name param");
+    assert_eq!(name.r#type, VariableType::String);
+    // `desc` is taken verbatim (§2.1/§3): the quotes are part of the value.
+    assert_eq!(name.desc.as_deref(), Some("\"User name\""));
+    assert_eq!(
+        prompt.variable_defaults.get("name"),
+        Some(&universal_prompt_language::upl::parser::VariableValue::String("John".into()))
+    );
+    assert_eq!(prompt.prompt, "Hello, [[[NAME]]]!\n");
 }
 
 #[test]
@@ -63,12 +74,20 @@ params:
               - "bearer"
               - "basic"
             def: "bearer"
----
-const config = { base_url: [[api_config.base_url]] };
+--
+const config = { base_url: [[[API_CONFIG.BASE_URL]]], auth: [[[API_CONFIG.AUTH.TYPE]]] };
 "#;
 
-    let result = PromptParser::parse(content);
-    assert!(result.is_ok());
+    let prompt = PromptParser::parse(content).expect("should parse");
+    let cfg = prompt.variable_definitions.get("api_config").expect("api_config");
+    assert_eq!(cfg.r#type, VariableType::Object);
+    let ofields = cfg.ofields_definitions.as_ref().expect("ofields");
+    assert!(ofields.contains_key("base_url"));
+    let auth = ofields.get("auth").expect("auth field");
+    assert_eq!(auth.r#type, VariableType::Object);
+    let auth_fields = auth.ofields_definitions.as_ref().expect("auth ofields");
+    assert_eq!(auth_fields.get("type").unwrap().r#type, VariableType::OptionSingle);
+    assert!(prompt.variable_defaults.contains_key("api_config.auth.type"));
 }
 
 #[test]
