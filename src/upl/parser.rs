@@ -161,6 +161,8 @@ pub enum PromptParseError {
     MissingName,
     #[error("Missing required 'params' metadata block")]
     MissingParams,
+    #[error("Invalid variable name '{name}': declarations must be lowercase alphanumeric (UTF-8) characters and underscores")]
+    InvalidVariableName { name: String },
     #[error("Invalid 'name' value '{name}': must be non-empty and contain only lowercase alphanumeric (UTF-8) characters and underscores")]
     InvalidName { name: String },
     #[error("prompt file must use the '.txt' or '.upl' extension")]
@@ -798,6 +800,13 @@ impl PromptParser {
             }
 
             let (key, _val) = extract_kv(stripped)?;
+            // Declarations are lowercase identifiers (RFC §2): the same
+            // charset as the prompt `name`. Anything else (uppercase,
+            // hyphens, spaces) can't be referenced reliably from the body
+            // or conditions.
+            if !is_valid_name(&key) {
+                return Err(PromptParseError::InvalidVariableName { name: key });
+            }
             let var_name = if prefix.is_empty() {
                 key.clone()
             } else {

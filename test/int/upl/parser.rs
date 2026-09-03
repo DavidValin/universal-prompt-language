@@ -1057,6 +1057,26 @@ fn test_duplicate_nested_field_name_is_error() {
 // --- `name` metadata field validation (RFC §2.1) ---
 
 #[test]
+fn test_uppercase_or_punctuated_param_declaration_is_error() {
+    // RFC §2: declarations in params are lowercase identifiers.
+    for bad in ["UserName", "my-var", "my var", "x.y"] {
+        let content = format!("--\nname: p\nparams:\n  {bad}:\n    type: string\n--\nbody\n");
+        let res = PromptParser::parse(&content);
+        assert!(
+            matches!(res, Err(PromptParseError::InvalidVariableName { .. })),
+            "declaration '{bad}' should be rejected: {:?}",
+            res
+        );
+    }
+    // Nested field names follow the same rule.
+    let content = "--\nname: p\nparams:\n  o:\n    type: object\n    ofields:\n      Field:\n        type: string\n--\nbody\n";
+    assert!(matches!(PromptParser::parse(content), Err(PromptParseError::InvalidVariableName { .. })));
+    // Lowercase unicode and digits are fine.
+    let content = "--\nname: p\nparams:\n  año_2:\n    type: string\n    def: \"x\"\n--\n[[[AÑO_2]]]\n";
+    assert!(PromptParser::parse(content).is_ok());
+}
+
+#[test]
 fn test_missing_params_is_error() {
     // RFC §2.1: `params` is required (it may be empty, but must be present).
     let content = "--\nname: p\ntitle: t\n--\nhello\n";
