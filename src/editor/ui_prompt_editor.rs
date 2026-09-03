@@ -26,12 +26,13 @@
 //   Ctrl+R                                   open the UPL Help popup (RFC reference)
 //   Esc / Ctrl+C                             quit back to the list
 //
-// Saves are always written to ~/.upl/prompts/<name>.txt, where <name> is the
-// parsed `name` field of the prompt. Saving is blocked while the content is
-// INVALID (unparsable) or has no valid `name`.
+// A prompt opened from a file is saved back to that file (or, if its `name`
+// was changed, to `<name>.txt` next to it). A new prompt is saved to
+// ~/.upl/prompts/<name>.txt, where <name> is the parsed `name` field. Saving
+// is blocked while the content is INVALID (unparsable) or has no valid `name`.
 
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::repository::protocol::prompts_dir;
 
@@ -139,6 +140,10 @@ pub struct Editor {
     errors: Vec<String>,
     saved: bool,
     message: String,
+    /// The file this prompt was opened from, if any. Saves go back to it
+    /// (or beside it when the `name` changed) instead of always landing in
+    /// the top-level `~/.upl/prompts/` folder.
+    origin: Option<PathBuf>,
 }
 
 /// Open the file at `path` in the editor. Returns `true` if the user saved
@@ -150,7 +155,7 @@ pub struct Editor {
 /// state and only manages the cursor visibility.
 pub fn run_editor(path: &Path) -> Result<bool, EditorError> {
     let content = std::fs::read_to_string(path).map_err(EditorError::Io)?;
-    run_editor_with_content(&content)
+    run_editor_impl(&content, Some(path.to_path_buf()))
 }
 
 /// Open the editor with the given initial `content` (instead of reading it
@@ -160,6 +165,10 @@ pub fn run_editor(path: &Path) -> Result<bool, EditorError> {
 /// Like [`run_editor`], the caller must have already entered the alternate
 /// screen and enabled raw mode.
 pub fn run_editor_with_content(content: &str) -> Result<bool, EditorError> {
+    run_editor_impl(content, None)
+}
+
+fn run_editor_impl(content: &str, origin: Option<PathBuf>) -> Result<bool, EditorError> {
     let (cols, rows) = terminal::size().map_err(|e| EditorError::Tui(e.to_string()))?;
     let mut ed = Editor {
         lines: split_lines(content),
@@ -174,6 +183,7 @@ pub fn run_editor_with_content(content: &str) -> Result<bool, EditorError> {
         errors: Vec::new(),
         saved: false,
         message: String::new(),
+        origin,
     };
     ed.recompute();
     ed.run()?;
@@ -532,10 +542,10 @@ impl Editor {
             self.message = "no `name` field: cannot save".to_string();
             return Ok(());
         };
-        let dir = prompts_dir()?;
-        std::fs::create_dir_all(&dir).map_err(EditorError::Io)?;
-        let fname = sanitize_filename(&format!("{name}.txt"));
-        let path = dir.join(&fname);
+        let path = save_path_for(&name, self.origin.as_deref(), prompts_dir()?);
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(EditorError::Io)?;
+        }
         std::fs::write(&path, self.content_string()).map_err(EditorError::Io)?;
         self.saved = true;
         self.message = format!("saved to {}", path.display());
@@ -1010,10 +1020,35 @@ fn wrap_text(s: &str, width: usize) -> Vec<String> {
     out
 }
 
+/// Where a save goes. A prompt opened from a file is written back to that
+/// file when its `name` still matches the file's base name (RFC §2); if the
+/// name changed, to `<name>.txt` in the same directory. A prompt with no
+/// origin (new from the skeleton) goes to `<prompts_dir>/<name>.txt`.
+fn save_path_for(name: &str, origin: Option<&Path>, prompts_dir: PathBuf) -> PathBuf {
+    let fname = sanitize_filename(&format!("{name}.txt"));
+    match origin {
+        Some(orig) => {
+            let same = crate::upl::parser::prompt_file_base_name(orig)
+                .map(|b| b == name)
+                .unwrap_or(false);
+            if same {
+                orig.to_path_buf()
+            } else {
+                orig.parent().map(Path::to_path_buf).unwrap_or(prompts_dir).join(fname)
+            }
+        }
+        None => prompts_dir.join(fname),
+    }
+}
+
+/// Keep the characters a valid prompt `name` may contain (lowercase
+/// alphanumeric in any script, `_`) plus `.`/`-`; anything else becomes `_`.
+/// Non-ASCII letters are valid in names (RFC §2.1) and must survive, or the
+/// saved file's base name no longer matches its `name` and it fails to load.
 fn sanitize_filename(s: &str) -> String {
     s.chars()
         .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-' {
+            if c.is_alphanumeric() || c == '.' || c == '_' || c == '-' {
                 c
             } else {
                 '_'

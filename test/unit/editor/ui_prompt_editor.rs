@@ -126,6 +126,32 @@ fn sanitize_keeps_safe_chars() {
 }
 
 #[test]
+fn sanitize_keeps_unicode_name_chars() {
+    // A prompt named `café_ñ_3` is valid (RFC §2.1); mangling it would make
+    // the saved file's base name mismatch its `name`.
+    assert_eq!(sanitize_filename("café_ñ_3.txt"), "café_ñ_3.txt");
+}
+
+#[test]
+fn save_path_prefers_origin_file() {
+    use std::path::{Path, PathBuf};
+    let prompts = PathBuf::from("/home/u/.upl/prompts");
+    // New prompt: top-level prompts dir.
+    assert_eq!(save_path_for("new_prompt", None, prompts.clone()), prompts.join("new_prompt.txt"));
+    // Opened from a file with a matching name: written back in place
+    // (extension and location preserved).
+    let orig = Path::new("/lib/team/my_prompt.upl");
+    assert_eq!(save_path_for("my_prompt", Some(orig), prompts.clone()), orig);
+    let pulled = Path::new("/home/u/.upl/prompts/host_7654/alice/my_prompt.txt");
+    assert_eq!(save_path_for("my_prompt", Some(pulled), prompts.clone()), pulled);
+    // Renamed: next to the original.
+    assert_eq!(
+        save_path_for("renamed", Some(orig), prompts.clone()),
+        PathBuf::from("/lib/team/renamed.txt")
+    );
+}
+
+#[test]
 fn wrap_text_breaks_long_lines() {
     let out = wrap_text("hello world this is a test", 10);
     for line in &out {
