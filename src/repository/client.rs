@@ -236,7 +236,12 @@ use std::sync::Arc;
 
 /// Derive a `ServerName` from a `host:port` string (strips the port).
 fn parse_server_name(host_port: &str) -> io::Result<ServerName<'static>> {
-    let host = host_port.rsplit_once(':').map(|(h, _)| h).unwrap_or(host_port);
+    // Accept `host:port`, `[v6]:port`, a bare `[v6]`, or a bare host.
+    let host = if let Some(rest) = host_port.strip_prefix('[') {
+        rest.split_once(']').map(|(h, _)| h).unwrap_or(rest)
+    } else {
+        host_port.rsplit_once(':').map(|(h, _)| h).unwrap_or(host_port)
+    };
     if let Ok(ip) = host.parse::<std::net::IpAddr>() {
         Ok(ServerName::IpAddress(ip.into()))
     } else {
