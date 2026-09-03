@@ -1646,6 +1646,36 @@ x
 }
 
 #[test]
+fn integration_object_ofields_before_type_ref_is_also_rejected() {
+    // The mutual exclusion must hold regardless of key order: `ofields`
+    // written before `type: <shape>` used to be silently discarded.
+    let upl = "\
+--
+name: p
+params:
+  host:
+    type: object_shape
+    ofields:
+      host:
+        type: string
+  cfg:
+    ofields:
+      extra:
+        type: string
+    type: host
+--
+x
+--
+";
+    let res = universal_prompt_language::upl::parser::PromptParser::parse(upl);
+    assert!(
+        matches!(res, Err(PromptParseError::InvalidOfieldsForType { .. })),
+        "{:?}",
+        res
+    );
+}
+
+#[test]
 fn integration_object_field_reuses_object_shape() {
     // A nested object field may inherit an object_shape's shape via
     // `type: <name>` (RFC §3.4.2 inside an object).

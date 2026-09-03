@@ -852,6 +852,15 @@ impl PromptParser {
                         match Self::parse_type(v, "type") {
                             Ok(t) => def.r#type = t,
                             Err(_) => {
+                                // `type: <shape>` and inline `ofields` are
+                                // mutually exclusive (RFC §3.4.2) regardless
+                                // of which key was written first.
+                                if def.ofields_definitions.is_some() {
+                                    return Err(PromptParseError::InvalidOfieldsForType {
+                                        type_name:
+                                            "object (cannot have both `type: <shape>` and `ofields`)".into(),
+                                    });
+                                }
                                 def.type_ref = Some(v.to_string());
                                 def.r#type = VariableType::Object;
                             }
