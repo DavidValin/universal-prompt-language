@@ -1280,6 +1280,11 @@ impl PromptParser {
             // shape, so an inline object option with no label parsed fine
             // and only failed later, when actually building interactively.)
             let is_object_etype = etype == Some(Object);
+            // `label` is only meaningful for object-shaped etypes; on a
+            // scalar etype it is not allowed (RFC §3.3 / §3.6).
+            if !is_object_etype && def.label.is_some() {
+                return Err(PromptParseError::InvalidLabelForType);
+            }
             if is_object_etype {
                 let label = match &def.label {
                     Some(l) if !l.trim().is_empty() => l.trim().to_string(),

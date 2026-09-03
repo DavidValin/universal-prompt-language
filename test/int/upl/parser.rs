@@ -560,6 +560,25 @@ params:
 }
 
 #[test]
+fn test_label_on_scalar_etype_option_is_error() {
+    // RFC §3.3: `label` is not allowed for scalar etypes.
+    let content = r#"--
+name: p
+params:
+  env:
+    type: option_single
+    label: whatever
+    opts:
+      - "a"
+      - "b"
+--
+[[[ENV]]]
+"#;
+    let res = PromptParser::parse(content);
+    assert!(matches!(res, Err(PromptParseError::InvalidLabelForType)), "{:?}", res);
+}
+
+#[test]
 fn test_option_single_without_etype_defaults_to_string() {
     let content = r#"--
 name: p
