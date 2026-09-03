@@ -581,6 +581,63 @@ params:
 }
 
 #[test]
+fn test_option_default_must_be_one_of_opts() {
+    let content = r#"--
+name: p
+params:
+  env:
+    type: option_single
+    opts:
+      - "dev"
+      - "prod"
+    def: "staging"
+--
+[[[ENV]]]
+"#;
+    let res = PromptParser::parse(content);
+    assert!(matches!(res, Err(PromptParseError::DefaultNotInOpts { .. })), "{:?}", res);
+
+    let content = r#"--
+name: p
+params:
+  tags:
+    type: option_multi
+    etype: string
+    opts:
+      - "a"
+      - "b"
+    def: ["a", "z"]
+--
+[[[TAGS]]]
+"#;
+    let res = PromptParser::parse(content);
+    assert!(matches!(res, Err(PromptParseError::DefaultNotInOpts { .. })), "{:?}", res);
+
+    // Object-etype defaults are compared by value.
+    let content = r#"--
+name: p
+params:
+  feature:
+    type: object_shape
+    ofields:
+      name:
+        type: string
+  pick:
+    type: option_single
+    etype: feature
+    label: name
+    opts:
+      - { name: "auth" }
+      - { name: "logs" }
+    def: { name: "nope" }
+--
+[[[PICK.NAME]]]
+"#;
+    let res = PromptParser::parse(content);
+    assert!(matches!(res, Err(PromptParseError::DefaultNotInOpts { .. })), "{:?}", res);
+}
+
+#[test]
 fn test_option_single_without_etype_defaults_to_string() {
     let content = r#"--
 name: p

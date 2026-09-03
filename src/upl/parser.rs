@@ -223,6 +223,8 @@ pub enum PromptParseError {
         declared: VariableType,
         value: String,
     },
+    #[error("Default for '{path}' is not one of its declared opts: {value}")]
+    DefaultNotInOpts { path: String, value: String },
     #[error("Heredoc 'def: >>>' is only allowed for 'long_string' variables")]
     HeredocNotLongString { field: String },
     #[error("Heredoc 'def: >>>' is missing its terminating '<<<' line")]
@@ -1353,6 +1355,23 @@ impl PromptParser {
                             etype: format!("{:?}", et),
                             value: format!("{:?}", v),
                         });
+                    }
+                }
+                // The declared `def` must be one of the opts (every element,
+                // for option_multi) — the same rule the JSON/interactive
+                // builders enforce on supplied values, applied at parse time.
+                if let Some(default) = defaults.get(path) {
+                    let candidates: Vec<&VariableValue> = match (def.r#type, default) {
+                        (OptionMulti, VariableValue::List(items)) => items.iter().collect(),
+                        _ => vec![default],
+                    };
+                    for v in candidates {
+                        if !opts.iter().any(|o| o == v) {
+                            return Err(PromptParseError::DefaultNotInOpts {
+                                path: path.to_string(),
+                                value: format!("{:?}", v),
+                            });
+                        }
                     }
                 }
                 // For object etype, also ensure each opt object has the label
