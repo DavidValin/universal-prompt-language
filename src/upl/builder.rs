@@ -1031,11 +1031,15 @@ impl PromptBuilder {
         Ok(VariableValue::Object(map))
     }
 
+    /// Collect a list interactively. The list starts from `default` — the
+    /// declared `def:` items, or the previously collected/resumed value when
+    /// coming back to this field — so existing items can be kept, edited or
+    /// removed rather than always starting from an empty list.
     fn collect_list(
         &self,
         path: &str,
         def: &VariableDefinition,
-        _default: Option<&VariableValue>,
+        default: Option<&VariableValue>,
     ) -> Result<VariableValue, BuilderError> {
         let etype = def
             .element_type
@@ -1054,15 +1058,54 @@ impl PromptBuilder {
             exclude_condition: None,
         };
 
-        let mut items: Vec<VariableValue> = Vec::new();
-        let help = format!("add or finish items{BACK_HINT}");
+        let mut items: Vec<VariableValue> = match default {
+            Some(VariableValue::List(l)) => l.clone(),
+            _ => Vec::new(),
+        };
+        let help = format!("add, edit, remove or finish items{BACK_HINT}");
         loop {
-            let menu_lbl = format!("{} ({} items added)", path, items.len());
-            let mut select = inquire::Select::new(&menu_lbl, vec!["add item".to_string(), "done".to_string()]);
+            let menu_lbl = format!("{} ({} items)", path, items.len());
+            let mut choices = vec!["add item".to_string()];
+            if !items.is_empty() {
+                choices.push("edit item".to_string());
+                choices.push("remove item".to_string());
+            }
+            choices.push("done".to_string());
+            let mut select = inquire::Select::new(&menu_lbl, choices);
             select = select.with_help_message(&help);
-            let choice = select.prompt().map_err(map_inquire_err)?;
+            let choice = match select.prompt() {
+                Ok(c) => c,
+                // Esc on the list menu goes back to the previous parameter.
+                Err(e) => return Err(map_inquire_err(e)),
+            };
             if choice == "done" {
                 break;
+            }
+            if choice == "edit item" || choice == "remove item" {
+                let labels: Vec<String> = items
+                    .iter()
+                    .enumerate()
+                    .map(|(i, v)| format!("{}: {}", i + 1, item_summary(v)))
+                    .collect();
+                let pick = inquire::Select::new(&format!("{} > {}", path, choice), labels.clone())
+                    .with_help_message("Esc: back to the list menu")
+                    .prompt();
+                let idx = match pick {
+                    Ok(l) => labels.iter().position(|x| *x == l).unwrap_or(0),
+                    Err(inquire::InquireError::OperationCanceled) => continue,
+                    Err(e) => return Err(map_inquire_err(e)),
+                };
+                if choice == "remove item" {
+                    items.remove(idx);
+                    continue;
+                }
+                let ipath = format!("{}[{}]", path, idx);
+                match self.collect_definition(&ipath, &elem_def, Some(&items[idx])) {
+                    Ok(v) => items[idx] = v,
+                    Err(BuilderError::Back) => {}
+                    Err(e) => return Err(e),
+                }
+                continue;
             }
             // "add item" — collect a new item at index `items.len()`. Pressing
             // Esc (Back) while entering an item moves back to re-edit the
@@ -1101,6 +1144,16 @@ impl PromptBuilder {
 
 fn label(path: &str, _def: &VariableDefinition) -> String {
     format!("> {}", path)
+}
+
+/// One-line summary of a list item for the edit/remove pickers.
+fn item_summary(v: &VariableValue) -> String {
+    let s = stringify(v).unwrap_or_default().replace('\n', " ");
+    if s.chars().count() > 60 {
+        format!("{}...", s.chars().take(57).collect::<String>())
+    } else {
+        s
+    }
 }
 
 /// Print a summary of already-collected fields on stderr so the user can
