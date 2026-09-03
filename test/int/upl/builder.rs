@@ -94,6 +94,24 @@ fn test_number_and_boolean_placeholders() {
 }
 
 #[test]
+fn test_number_rendering_edge_cases() {
+    let body = "[[[N]]]";
+    assert_eq!(render_str(body, &[("n", VariableValue::Number(80.0))]), "80");
+    assert_eq!(render_str(body, &[("n", VariableValue::Number(-0.0))]), "0");
+    assert_eq!(render_str(body, &[("n", VariableValue::Number(3.14))]), "3.14");
+    assert_eq!(render_str(body, &[("n", VariableValue::Number(-470.0))]), "-470");
+    // Large integers must not saturate to i64::MAX.
+    assert_eq!(
+        render_str(body, &[("n", VariableValue::Number(1e20))]),
+        "100000000000000000000"
+    );
+    assert_eq!(
+        render_str(body, &[("n", VariableValue::Number(-1e20))]),
+        "-100000000000000000000"
+    );
+}
+
+#[test]
 fn test_nested_object_placeholder() {
     let mut obj = ObjectMap::new();
     let mut auth = ObjectMap::new();

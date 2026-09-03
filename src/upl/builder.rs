@@ -1338,7 +1338,11 @@ fn values_equal(a: &VariableValue, b: &VariableValue) -> bool {
 }
 
 fn number_to_string(n: f64) -> String {
-    if n.fract() == 0.0 {
+    // Integer-valued numbers render without a fractional part (RFC §4.6.1).
+    // Only cast to i64 while the value is exactly representable there;
+    // beyond that the cast saturates (1e20 used to print as i64::MAX), so
+    // fall back to Rust's own formatting, which prints the full integer.
+    if n.fract() == 0.0 && n.abs() < 9.0e15 {
         format!("{}", n as i64)
     } else {
         format!("{}", n)
