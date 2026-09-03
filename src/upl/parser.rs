@@ -2345,6 +2345,12 @@ fn find_loop_end(s: &str, body_start: usize) -> Option<usize> {
     let mut i = body_start;
     let mut depth = 1;
     while i < s.len() {
+        // An escaped opener (`\{{{`, RFC §4.5) is literal text, never a
+        // tag — skip it so it can't open or close a block.
+        if s[i..].starts_with("\\{{{") {
+            i += 4;
+            continue;
+        }
         if is_loop_open(s, i) {
             depth += 1;
             // skip the whole opener tag `{{{for ...}}}`
@@ -2382,6 +2388,11 @@ fn find_if_end(s: &str, body_start: usize) -> Option<usize> {
     let mut i = body_start;
     let mut depth = 1;
     while i < s.len() {
+        // Escaped opener (RFC §4.5): literal text, not a tag.
+        if s[i..].starts_with("\\{{{") {
+            i += 4;
+            continue;
+        }
         if s[i..].starts_with("{{{if ") {
             depth += 1;
             // skip the whole opener tag `{{{if ...}}}`

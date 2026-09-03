@@ -396,6 +396,24 @@ fn test_escaped_matched_brackets_parses() {
 }
 
 #[test]
+fn test_escaped_block_tags_inside_loop_body_are_literal() {
+    // An escaped `\{{{end for}}}` / `\{{{for ...}}}` inside a loop body is
+    // literal text (§4.5) and must not close or open a block.
+    let res = Template::parse(
+        "{{{for X in XS}}}\nsyntax: \\{{{end for}}} closes a loop\n{{{end for}}}\n",
+    );
+    assert!(res.is_ok(), "{:?}", res);
+    let res = Template::parse(
+        "{{{for X in XS}}}\nsyntax: \\{{{for Y in YS}}} opens a loop\n{{{end for}}}\n",
+    );
+    assert!(res.is_ok(), "{:?}", res);
+    let res = Template::parse(
+        "{{{if A}}}\nsyntax: \\{{{end if}}} closes a block\n{{{end if}}}\n",
+    );
+    assert!(res.is_ok(), "{:?}", res);
+}
+
+#[test]
 fn test_unescaped_matched_braces_still_a_parse_error() {
     // The escape is opt-in; a matched `{{{...}}}` that isn't a valid
     // construct and ISN'T escaped remains a parse error (§4.5 baseline).
