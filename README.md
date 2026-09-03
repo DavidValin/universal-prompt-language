@@ -30,9 +30,9 @@ All operations are integrated in a single cli command called `upl`.
 * Prompt Browser: `upl <prompts_folder>` (or `upl` alone to browse `~/.upl`)
 * Prompt Builder: `upl b <prompt_file.txt>` (builds a single file directly)
 * Prompt Editor: `upl init` (create a new prompt from the skeleton)
-* Repository server: `upl start-repository`
-* Repository client (push): `upl push a_user/my_nice_prompt`
-* Repository client (push): `upl pull a_user/my_nice_prompt`
+* Repository server: `upl start_repository`
+* Repository client (push): `upl push my_nice_prompt.txt`
+* Repository client (pull): `upl pull a_user/my_nice_prompt`
 
 `upl` is the cli interface which allows you to navigate through the prompts and build them by filling in the variables. `upl` allows you to create a repository server to store the prompts and it also to communicate with a `upl` repository to `push` and `pull` prompts from it.
 
@@ -66,10 +66,10 @@ On its very first run `upl` checks for the user library at `~/.upl`. If that
 folder does not exist yet, `upl` creates it and seeds it with a small bundled
 starter library so you can start browsing and building right away:
 
-- `~/.upl/prompts/` — a set of sample prompts (`analyze_argument.txt`,
-  `create_a_plan.txt`, `create_rest_api.txt`, `explain_subject.txt`,
-  `implement_user_story.txt`, `review_article.txt`,
-  `teach_foundations.txt`).
+- `~/.upl/prompts/` — the sample prompts shipped in the repo's `samples/`
+  folder (`analyze_argument.txt`, `create_a_plan.txt`, `create_rest_api.txt`,
+  `explain_subject.txt`, `implement_user_story.txt`, `review_article.txt`,
+  `teach_foundations.txt`, and the rest of that folder).
 - `~/.upl/tags_db` — a pre-built tag store associating those sample prompts
   with their tags (e.g. `software development`, `planning`, `understand`,
   `analysis`, `review`, `teaching`).
@@ -95,6 +95,14 @@ upl <prompts_folder>
 
 From the browser you can press `e` on a prompt to open it in the [Prompt
 Editor](#prompt-editor), or `n` to create a new one from the skeleton.
+Files that fail to parse are not listed; the browser header shows how many
+were skipped and their errors are printed when you leave the browser.
+
+Tags (`t` to filter, `Ctrl+T` to tag the selected prompt) are attached to
+the **sha256 of the prompt file's contents**, not to its name. Editing a
+prompt therefore detaches its tags, and opening the tag filter prunes
+associations whose file no longer exists in the library.
+
 Press `Ctrl+H` to open the [Build History](#build-history) sidebar and
 resume or rebuild a previous build.
 
@@ -276,7 +284,8 @@ UPL ships with a built-in terminal text editor for authoring and editing
 prompts without leaving `upl`. It opens a full-screen, two-pane view: an
 editable area on the left and a live list of the prompt's declared variables
 on the right. The content is re-parsed on every keystroke, so a VALID /
-INVALID badge in the status bar always reflects the current state.
+INVALID badge at the top of the sidebar always reflects the current state
+(when INVALID, the sidebar shows the parse error instead of the variables).
 
 Key bindings:
 
@@ -287,7 +296,7 @@ Key bindings:
 | Enter         | new line                                                |
 | Backspace / Delete | erase                                              |
 | Tab           | insert 2 spaces                                         |
-| Ctrl+S        | save (only when VALID) to `~/.upl/prompts/<name>.txt`   |
+| Ctrl+S        | save (only when VALID): back to the opened file, or `~/.upl/prompts/<name>.txt` for a new prompt |
 | Ctrl+R        | open the UPL RFC reference popup                        |
 | Esc / Ctrl+C  | quit back to the list                                   |
 
@@ -331,7 +340,7 @@ You can `push` `pull` prompts from a repository:
 
 ```bash
 # Configure the repository (once)
-upl set-rep http://remote-machine
+upl set-rep remote-machine:7654
 upl login
 upl push my_nice_prompt.txt
 upl pull a_user/my_nice_prompt
