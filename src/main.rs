@@ -424,10 +424,15 @@ fn run_start_repository(args: &[String], prog: &str) -> Result<(), Box<dyn std::
             return Err(format!("unexpected argument: {a}").into());
         }
     }
-    if tls_cert.is_none() && bind.is_some() {
-        // `start_repository <bind>` with no cert: interpret the arg as bind
-        // address for plain TCP mode.
-        bind = tls_cert.take();
+    // `start_repository <bind>` with no cert: a single argument that is not
+    // an existing file but looks like `host:port` is the bind address for
+    // plain TCP mode. (The previous check here could never fire, since
+    // `bind` is only ever set after `tls_cert`.)
+    if let (Some(first), None) = (tls_cert, bind) {
+        if !Path::new(first).is_file() && first.contains(':') {
+            bind = Some(first);
+            tls_cert = None;
+        }
     }
     server::start_repository(tls_cert, bind)
 }
