@@ -507,6 +507,7 @@ fn test_unmatched_if_is_error() {
 fn test_unmatched_loop_in_full_prompt_is_error() {
     let content = r#"--
 name: p
+params:
 --
 {{{for X in X}}}body
 "#;
@@ -518,6 +519,7 @@ name: p
 fn test_unmatched_if_in_full_prompt_is_error() {
     let content = r#"--
 name: p
+params:
 --
 {{{if true}}}body
 "#;
@@ -1053,6 +1055,17 @@ fn test_duplicate_nested_field_name_is_error() {
 }
 
 // --- `name` metadata field validation (RFC §2.1) ---
+
+#[test]
+fn test_missing_params_is_error() {
+    // RFC §2.1: `params` is required (it may be empty, but must be present).
+    let content = "--\nname: p\ntitle: t\n--\nhello\n";
+    let res = PromptParser::parse(content);
+    assert!(matches!(res, Err(PromptParseError::MissingParams)), "{:?}", res);
+    // Empty params blocks are fine.
+    assert!(PromptParser::parse("--\nname: p\nparams:\n--\nhello\n").is_ok());
+    assert!(PromptParser::parse("--\nname: p\nparams: {}\n--\nhello\n").is_ok());
+}
 
 #[test]
 fn test_missing_name_is_error() {

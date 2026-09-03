@@ -159,6 +159,8 @@ pub enum PromptParseError {
     InvalidHeaderKey(String),
     #[error("Missing required 'name' metadata field")]
     MissingName,
+    #[error("Missing required 'params' metadata block")]
+    MissingParams,
     #[error("Invalid 'name' value '{name}': must be non-empty and contain only lowercase alphanumeric (UTF-8) characters and underscores")]
     InvalidName { name: String },
     #[error("prompt file must use the '.txt' or '.upl' extension")]
@@ -559,13 +561,11 @@ impl PromptParser {
         let mut var_defs = VariableDefinitions::new();
         let mut defaults = VariableDefaults::new();
 
+        // `params` is a required metadata field (RFC §2.1). It may be empty
+        // (`params:` followed by nothing, or `params: {}`), but it must be
+        // present.
         if !header.contains_key("params") {
-            // No params block; consume the closing delimiter if present
-            if ctx.pos < ctx.content.len() && ctx.content[ctx.pos].trim() == "--" {
-                ctx.pos += 1;
-                ctx.line_num += 1;
-            }
-            return Ok((var_defs, defaults));
+            return Err(PromptParseError::MissingParams);
         }
 
         // First-level variables live at indent 2
