@@ -950,6 +950,11 @@ impl PromptBuilder {
         let def_idx = default.and_then(|v| option_match_index(v, &opts, etype));
         let lbl = label(path, def);
         let mut select = inquire::Select::new(&lbl, labels.clone());
+        // Start the cursor on the default so Enter picks it (the help text
+        // already advertised it, but the cursor sat on the first option).
+        if let Some(i) = def_idx {
+            select = select.with_starting_cursor(i);
+        }
         let help = match (desc(def), &def_idx) {
             (Some(desc), Some(i)) => format!("{} · default: {}{BACK_HINT}", desc, labels[*i]),
             (Some(desc), None) => format!("{} · select one{BACK_HINT}", desc),
