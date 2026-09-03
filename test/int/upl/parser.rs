@@ -992,6 +992,24 @@ params:
     assert!(ofields.contains_key("qty"));
 }
 
+// --- Duplicate declarations ---
+
+#[test]
+fn test_duplicate_param_name_is_error() {
+    // A second declaration used to silently replace the first (while the
+    // first's `def` lingered in the defaults map).
+    let content = "--\nname: p\nparams:\n  x:\n    type: string\n    def: \"a\"\n  x:\n    type: string\n    def: \"b\"\n--\n[[[X]]]\n";
+    let res = PromptParser::parse(content);
+    assert!(matches!(res, Err(PromptParseError::DuplicateVariable { .. })), "{:?}", res);
+}
+
+#[test]
+fn test_duplicate_nested_field_name_is_error() {
+    let content = "--\nname: p\nparams:\n  o:\n    type: object\n    ofields:\n      f:\n        type: string\n      f:\n        type: number\n--\n[[[O.F]]]\n";
+    let res = PromptParser::parse(content);
+    assert!(matches!(res, Err(PromptParseError::DuplicateVariable { .. })), "{:?}", res);
+}
+
 // --- `name` metadata field validation (RFC §2.1) ---
 
 #[test]

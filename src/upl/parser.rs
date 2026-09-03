@@ -267,6 +267,8 @@ pub enum PromptParseError {
     },
     #[error("condition operator '{op}': {detail}")]
     ConditionOperatorTypeError { op: String, detail: String },
+    #[error("Variable '{name}' is declared more than once in the same block")]
+    DuplicateVariable { name: String },
     #[error("Content found after the body's '--' terminator (a bare '--' line inside the body is treated as the terminator, so nothing may follow it): '{0}'")]
     ContentAfterBodyTerminator(String),
 }
@@ -1032,6 +1034,9 @@ impl PromptParser {
                 }
             }
 
+            if var_defs.contains_key(&key) {
+                return Err(PromptParseError::DuplicateVariable { name: var_name });
+            }
             var_defs.insert(key.clone(), def);
         }
 
