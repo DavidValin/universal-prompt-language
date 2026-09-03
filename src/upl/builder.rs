@@ -700,10 +700,31 @@ impl PromptBuilder {
                     }
                 }
                 Err(BuilderError::Back) => {
-                    if idx == 0 {
-                        return Err(BuilderError::Cancelled);
+                    // Step back to the previous *shown* parameter. A
+                    // parameter hidden by its exclude_condition is skipped
+                    // on the way back too; otherwise the forward pass would
+                    // immediately re-skip it and bounce the user forward,
+                    // making anything before it unreachable.
+                    loop {
+                        if idx == 0 {
+                            return Err(BuilderError::Cancelled);
+                        }
+                        idx -= 1;
+                        let (_, pdef) = &defs[idx];
+                        let hidden = match &pdef.exclude_condition {
+                            Some(cond) => {
+                                let mut current = ValueMap::new();
+                                for ((k, _), v) in defs.iter().zip(&values) {
+                                    current.insert(k.clone(), v.clone());
+                                }
+                                is_condition_hidden(cond, &current)?
+                            }
+                            None => false,
+                        };
+                        if !hidden {
+                            break;
+                        }
                     }
-                    idx -= 1;
                 }
                 Err(e) => return Err(e),
             }
