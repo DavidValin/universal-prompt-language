@@ -1112,6 +1112,20 @@ fn test_bare_nan_and_inf_tokens_are_strings() {
     );
 }
 
+// --- Indentation uses spaces only (RFC §2) ---
+
+#[test]
+fn test_tab_indentation_is_error() {
+    // Two tabs happen to count as two columns, so this used to parse.
+    let content = "--\nname: p\nparams:\n\t\tx:\n\t\t\t\ttype: string\n--\n[[[X]]]\n";
+    let res = PromptParser::parse(content);
+    assert!(matches!(res, Err(PromptParseError::TabIndentation(_))), "{:?}", res);
+    // A tab in a block-list item's indentation is rejected too.
+    let content = "--\nname: p\nparams:\n  xs:\n    type: list\n    etype: string\n    def:\n\t\t\t\t\t\t- \"a\"\n--\n[[[XS]]]\n";
+    let res = PromptParser::parse(content);
+    assert!(matches!(res, Err(PromptParseError::TabIndentation(_))), "{:?}", res);
+}
+
 // --- `type` is required (RFC §3) ---
 
 #[test]

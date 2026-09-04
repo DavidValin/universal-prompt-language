@@ -161,6 +161,8 @@ pub enum PromptParseError {
     MissingName,
     #[error("Missing required 'params' metadata block")]
     MissingParams,
+    #[error("Tab character used for indentation (RFC §2: indentation uses spaces only): '{0}'")]
+    TabIndentation(String),
     #[error("Variable '{name}' has no 'type' (RFC §3: type is required)")]
     MissingType { name: String },
     #[error("Invalid variable name '{name}': declarations must be lowercase alphanumeric (UTF-8) characters and underscores")]
@@ -327,6 +329,17 @@ struct Binding<'a> {
     name: String,
     shape: Shape<'a>,
     own_kind: OperandKind,
+}
+
+/// Reject a tab anywhere in a line's leading whitespace (RFC §2: spaces
+/// only). `trim_start` strips tabs too, so without this check a tab counted
+/// as one column and a tab-indented block could parse by accident.
+fn check_no_tab_indent(line: &str) -> Result<(), PromptParseError> {
+    let leading = &line[..line.len() - line.trim_start().len()];
+    if leading.contains('\t') {
+        return Err(PromptParseError::TabIndentation(line.to_string()));
+    }
+    Ok(())
 }
 
 // --- Extract value from key-value line ---
@@ -799,6 +812,7 @@ impl PromptParser {
             if stripped == "--" || cur_indent < indent {
                 break;
             }
+            check_no_tab_indent(line)?;
             if cur_indent != indent {
                 return Err(PromptParseError::IndentationError {
                     expected: indent,
@@ -850,6 +864,7 @@ impl PromptParser {
                 if pindent <= indent {
                     break;
                 }
+                check_no_tab_indent(pline)?;
                 if pindent != indent + 2 {
                     return Err(PromptParseError::IndentationError {
                         expected: indent + 2,
@@ -971,6 +986,7 @@ impl PromptParser {
                                 if !(istripped.starts_with("- ") || istripped == "-") {
                                     break;
                                 }
+                                check_no_tab_indent(iline)?;
                                 let item_val = istripped
                                     .strip_prefix('-')
                                     .map(|s| s.trim())
@@ -1019,6 +1035,7 @@ impl PromptParser {
                                 if !(istripped.starts_with("- ") || istripped == "-") {
                                     break;
                                 }
+                                check_no_tab_indent(iline)?;
                                 let item_val = istripped
                                     .strip_prefix('-')
                                     .map(|s| s.trim())
