@@ -19,7 +19,8 @@ use std::io::Write as _;
 use thiserror::Error;
 
 use crate::upl::parser::{
-    CondExpr, Node, ObjectMap, Prompt, VariableDefinition, VariableType, VariableValue,
+    default_value_for, lookup_default, CondExpr, Node, ObjectMap, Prompt, VariableDefinition,
+    VariableType, VariableValue,
 };
 use crate::manager::build_history::{
     self, BuildRecord, HistoryContext, SidebarOutcome,
@@ -179,112 +180,16 @@ impl PromptBuilder {
         map
     }
 
-    /// Look up a declared `def` for `path`, falling back from a specific
-    /// list/option element instance path (e.g. `servers[0].port`) to the
-    /// canonical per-field default `etype: <object_shape>` copies onto the
-    /// list/option's own path (`servers.port`) during element-ref
-    /// resolution (RFC §3, E5) — every element shares the same field
-    /// defaults, so there's no reason to key them per-instance.
+    /// Look up a declared `def` for `path` (see `parser::lookup_default`).
     fn lookup_default(&self, path: &str) -> Option<VariableValue> {
-        self.prompt
-            .variable_defaults
-            .get(path)
-            .or_else(|| {
-                strip_index_segment(path).and_then(|canonical| self.prompt.variable_defaults.get(&canonical))
-            })
-            .cloned()
+        lookup_default(&self.prompt.variable_defaults, path)
     }
 
+    /// Synthesize the value a variable takes when nothing is supplied (RFC
+    /// §3 default table, object-literal merge, element fill). Shared with
+    /// the parser via `parser::default_value_for`.
     fn default_value(&self, path: &str, def: &VariableDefinition) -> VariableValue {
-        use VariableType::*;
-        match def.r#type {
-            String | LongString => self
-                .lookup_default(path)
-                .unwrap_or(VariableValue::String(::std::string::String::new())),
-            Number => self
-                .lookup_default(path)
-                .unwrap_or(VariableValue::Number(0.0)),
-            Boolean => self
-                .lookup_default(path)
-                .unwrap_or(VariableValue::Boolean(false)),
-            OptionSingle => {
-                let etype = def.element_type.unwrap_or(VariableType::String);
-                if let Some(v) = self.lookup_default(path) {
-                    return self.fill_element_defaults(path, def, &v);
-                }
-                if let Some(opts) = &def.options {
-                    if let Some(first) = opts.first() {
-                        return first.clone();
-                    }
-                }
-                option_type_zero(etype)
-            }
-            OptionMulti => {
-                if let Some(VariableValue::List(items)) = self.lookup_default(path) {
-                    return VariableValue::List(
-                        items.iter().map(|e| self.fill_element_defaults(path, def, e)).collect(),
-                    );
-                }
-                VariableValue::List(vec![])
-            }
-            Object | ObjectShape => {
-                let mut map = ObjectMap::new();
-                if let Some(nested) = &def.ofields_definitions {
-                    for (k, nd) in nested {
-                        let npath = format!("{}.{}", path, k);
-                        map.insert(k.clone(), self.default_value(&npath, nd));
-                    }
-                }
-                // An object-level `def` literal (RFC §3) overrides the
-                // shape's field-level defaults on a per-key basis: a key the
-                // literal declares wins; any key it doesn't mention falls
-                // back to the shape's own default for that field. Nested
-                // object fields merge recursively for the same reason.
-                if let Some(VariableValue::Object(overrides)) = self.lookup_default(path) {
-                    map = merge_object_default(map, &overrides);
-                }
-                VariableValue::Object(map)
-            }
-            List => {
-                // Honor an inline `def:` list, filling any field an object
-                // element omits from the element shape's own defaults (RFC
-                // §3.4 / §3.3); otherwise default to an empty list (RFC §3 —
-                // `def` is optional, list falls back to `[]`).
-                if let Some(VariableValue::List(items)) = self.lookup_default(path) {
-                    return VariableValue::List(
-                        items.iter().map(|e| self.fill_element_defaults(path, def, e)).collect(),
-                    );
-                }
-                VariableValue::List(vec![])
-            }
-        }
-    }
-
-    /// Complete a list/option element taken from a `def:` literal. For an
-    /// object-shaped element, every field the literal doesn't mention falls
-    /// back to the element shape's field default (RFC §3.4: "any field the
-    /// element's value doesn't mention falls back to the shape's own field
-    /// default"), merged recursively like an object-level `def`. Scalar
-    /// elements are returned unchanged.
-    fn fill_element_defaults(
-        &self,
-        path: &str,
-        def: &VariableDefinition,
-        elem: &VariableValue,
-    ) -> VariableValue {
-        let is_object_etype =
-            def.element_type == Some(VariableType::Object) || def.element_ref.is_some();
-        match (is_object_etype, elem, &def.ofields_definitions) {
-            (true, VariableValue::Object(overrides), Some(ofields)) => {
-                let mut base = ObjectMap::new();
-                for (k, nd) in ofields {
-                    let npath = format!("{}.{}", path, k);
-                    base.insert(k.clone(), self.default_value(&npath, nd));
-                }
-                VariableValue::Object(merge_object_default(base, overrides))
-            }
-            _ => elem.clone(),
-        }
+        default_value_for(&self.prompt.variable_defaults, path, def)
     }
 
     // -----------------------------------------------------------------------
@@ -1239,19 +1144,6 @@ fn help_with_back(def: &VariableDefinition) -> String {
     }
 }
 
-/// Type-appropriate zero value for an option etype, used as a last-resort
-/// fallback when no `def` and no `opts` are present (parser normally
-/// requires `opts`).
-fn option_type_zero(etype: VariableType) -> VariableValue {
-    match etype {
-        VariableType::String => VariableValue::String(String::new()),
-        VariableType::LongString => VariableValue::LongString(String::new()),
-        VariableType::Number => VariableValue::Number(0.0),
-        VariableType::Object => VariableValue::Object(ObjectMap::new()),
-        _ => VariableValue::String(String::new()),
-    }
-}
-
 /// Synthesize a `VariableDefinition` for a list/option element from the
 /// parent definition's resolved etype and ofields. This mirrors the element
 /// definition synthesized by `collect_list`.
@@ -1364,48 +1256,6 @@ fn option_match_index(
         }),
         _ => None,
     }
-}
-
-/// Strip a `[N]` list/option-element index from `path`'s first segment, if
-/// present, so a specific element instance path (e.g. `servers[0].port` or
-/// `servers[0]`) maps back to the list/option's own canonical path
-/// (`servers.port` / `servers`) — where `etype: <object_shape>` field
-/// defaults are copied during element-ref resolution (RFC §3, E5). The
-/// index only ever appears in the leftmost segment, since only a list/
-/// option_multi's own elements are indexed. Returns `None` if there's no
-/// index to strip (nothing to fall back to beyond the exact path already
-/// tried).
-fn strip_index_segment(path: &str) -> Option<String> {
-    let open = path.find('[')?;
-    let close = path[open..].find(']')? + open;
-    let mut out = String::with_capacity(path.len() - (close - open + 1));
-    out.push_str(&path[..open]);
-    out.push_str(&path[close + 1..]);
-    Some(out)
-}
-
-/// Merge an object-level `def` literal's declared fields over a base map of
-/// shape-derived field defaults (RFC §3, E4): a key `overrides` declares
-/// wins; a key it doesn't mention keeps its value from `base`. When both
-/// sides have an object at the same key, they're merged recursively rather
-/// than the override replacing the whole nested object, so a partial nested
-/// override still inherits the rest of that nested shape's field defaults.
-/// `base`'s key order (the shape's declaration order, §4.6.1/§7.3) is
-/// preserved — `IndexMap::insert` on an existing key updates its value
-/// without moving it.
-fn merge_object_default(mut base: ObjectMap, overrides: &ObjectMap) -> ObjectMap {
-    for (k, v) in overrides {
-        match (base.get(k), v) {
-            (Some(VariableValue::Object(base_obj)), VariableValue::Object(override_obj)) => {
-                let merged = merge_object_default(base_obj.clone(), override_obj);
-                base.insert(k.clone(), VariableValue::Object(merged));
-            }
-            _ => {
-                base.insert(k.clone(), v.clone());
-            }
-        }
-    }
-    base
 }
 
 fn maps_equal(a: &ObjectMap, b: &ObjectMap) -> bool {

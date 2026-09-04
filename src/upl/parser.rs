@@ -2178,6 +2178,147 @@ if let Some(label) = &def.label {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Default synthesis (RFC §3 default table, §3 def-literal merge, §3.4 element
+// fill). Shared by the parser (opts canonicalization) and the builder.
+// ---------------------------------------------------------------------------
+
+/// Look up a declared `def` for `path`, falling back from a specific
+/// list/option element instance path (e.g. `servers[0].port`) to the
+/// canonical per-field default that element-ref resolution copies onto the
+/// list/option's own path (`servers.port`) — every element shares the same
+/// field defaults, so they are not keyed per instance.
+pub fn lookup_default(defaults: &VariableDefaults, path: &str) -> Option<VariableValue> {
+    defaults
+        .get(path)
+        .or_else(|| strip_index_segment(path).and_then(|canonical| defaults.get(&canonical)))
+        .cloned()
+}
+
+/// The value a variable takes when nothing is supplied: its `def`, else the
+/// type-appropriate default of RFC §3 (recursively for objects, with an
+/// object-level `def` literal merged per key over the field defaults, and
+/// list/option elements completed from their element shape).
+pub fn default_value_for(
+    defaults: &VariableDefaults,
+    path: &str,
+    def: &VariableDefinition,
+) -> VariableValue {
+    use VariableType::*;
+    match def.r#type {
+        String | LongString => lookup_default(defaults, path)
+            .unwrap_or(VariableValue::String(::std::string::String::new())),
+        Number => lookup_default(defaults, path).unwrap_or(VariableValue::Number(0.0)),
+        Boolean => lookup_default(defaults, path).unwrap_or(VariableValue::Boolean(false)),
+        OptionSingle => {
+            let etype = def.element_type.unwrap_or(VariableType::String);
+            if let Some(v) = lookup_default(defaults, path) {
+                return fill_element_defaults(defaults, path, def, &v);
+            }
+            if let Some(first) = def.options.as_ref().and_then(|o| o.first()) {
+                return first.clone();
+            }
+            option_type_zero(etype)
+        }
+        OptionMulti | List => {
+            if let Some(VariableValue::List(items)) = lookup_default(defaults, path) {
+                return VariableValue::List(
+                    items
+                        .iter()
+                        .map(|e| fill_element_defaults(defaults, path, def, e))
+                        .collect(),
+                );
+            }
+            VariableValue::List(vec![])
+        }
+        Object | ObjectShape => {
+            let mut map = ObjectMap::new();
+            if let Some(nested) = &def.ofields_definitions {
+                for (k, nd) in nested {
+                    let npath = format!("{}.{}", path, k);
+                    map.insert(k.clone(), default_value_for(defaults, &npath, nd));
+                }
+            }
+            // An object-level `def` literal (RFC §3) overrides the shape's
+            // field-level defaults per key; nested objects merge recursively.
+            if let Some(VariableValue::Object(overrides)) = lookup_default(defaults, path) {
+                map = merge_object_default(map, &overrides);
+            }
+            VariableValue::Object(map)
+        }
+    }
+}
+
+/// Complete a list/option element (from a `def:` literal, an `opts` entry, or
+/// supplied input): for an object-shaped element, every field the value
+/// doesn't mention falls back to the element shape's field default (RFC
+/// §3.4), merged recursively like an object-level `def`. Scalar elements
+/// are returned unchanged.
+pub fn fill_element_defaults(
+    defaults: &VariableDefaults,
+    path: &str,
+    def: &VariableDefinition,
+    elem: &VariableValue,
+) -> VariableValue {
+    let is_object_etype =
+        def.element_type == Some(VariableType::Object) || def.element_ref.is_some();
+    match (is_object_etype, elem, &def.ofields_definitions) {
+        (true, VariableValue::Object(overrides), Some(ofields)) => {
+            let mut base = ObjectMap::new();
+            for (k, nd) in ofields {
+                let npath = format!("{}.{}", path, k);
+                base.insert(k.clone(), default_value_for(defaults, &npath, nd));
+            }
+            VariableValue::Object(merge_object_default(base, overrides))
+        }
+        _ => elem.clone(),
+    }
+}
+
+/// Merge an object-level `def` literal's fields over a base map of
+/// shape-derived field defaults (RFC §3): a key `overrides` declares wins; a
+/// key it doesn't mention keeps its value from `base`. Objects at the same
+/// key merge recursively. `base`'s key order (declaration order, §4.6.1) is
+/// preserved — `IndexMap::insert` on an existing key updates in place.
+pub fn merge_object_default(mut base: ObjectMap, overrides: &ObjectMap) -> ObjectMap {
+    for (k, v) in overrides {
+        match (base.get(k), v) {
+            (Some(VariableValue::Object(base_obj)), VariableValue::Object(override_obj)) => {
+                let merged = merge_object_default(base_obj.clone(), override_obj);
+                base.insert(k.clone(), VariableValue::Object(merged));
+            }
+            _ => {
+                base.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    base
+}
+
+/// Type-appropriate zero value for an option etype (last-resort fallback
+/// when neither `def` nor `opts` yields a value).
+fn option_type_zero(etype: VariableType) -> VariableValue {
+    match etype {
+        VariableType::String => VariableValue::String(String::new()),
+        VariableType::LongString => VariableValue::LongString(String::new()),
+        VariableType::Number => VariableValue::Number(0.0),
+        VariableType::Object => VariableValue::Object(ObjectMap::new()),
+        _ => VariableValue::String(String::new()),
+    }
+}
+
+/// Strip a `[N]` element index from `path`'s first segment, if present, so an
+/// element instance path (`servers[0].port`) maps back to the list/option's
+/// canonical path (`servers.port`). Returns `None` if there is no index.
+fn strip_index_segment(path: &str) -> Option<String> {
+    let open = path.find('[')?;
+    let close = path[open..].find(']')? + open;
+    let mut out = String::with_capacity(path.len() - (close - open + 1));
+    out.push_str(&path[..open]);
+    out.push_str(&path[close + 1..]);
+    Some(out)
+}
+
 // --- Template parsing ---
 //
 // Parses the prompt body into a `Template` (a tree of `Node`s). Recognizes
