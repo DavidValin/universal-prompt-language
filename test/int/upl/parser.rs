@@ -306,7 +306,7 @@ hello
 fn test_heredoc_missing_terminator_is_error() {
     let content = "--\nname: p\nparams:\n  note:\n    type: long_string\n    def: >>>\nhello\n--\n[[[NOTE]]]\n";
     let res = PromptParser::parse(content);
-    assert!(matches!(res, Err(PromptParseError::MissingHeredocTerminator)));
+    assert!(matches!(res, Err(PromptParseError::MissingHeredocTerminator { .. })));
 }
 
 // --- Template-body validation tests ---
@@ -1177,6 +1177,35 @@ fn test_bare_nan_and_inf_tokens_are_strings() {
     );
 }
 
+// --- Error locations (RFC §9: errors SHOULD include the line number) ---
+
+#[test]
+fn test_parse_stage_errors_carry_line_numbers() {
+    // Mis-indented property on line 6 (1-based).
+    let content = "--\nname: p\nparams:\n  x:\n    type: string\n     def: \"a\"\n--\n[[[X]]]\n";
+    match PromptParser::parse(content) {
+        Err(PromptParseError::IndentationError { line, expected, actual }) => {
+            assert_eq!((line, expected, actual), (6, 4, 5));
+        }
+        other => panic!("{other:?}"),
+    }
+    // Duplicate declared on line 6.
+    let content = "--\nname: p\nparams:\n  x:\n    type: string\n  x:\n    type: string\n--\n[[[X]]]\n";
+    match PromptParser::parse(content) {
+        Err(PromptParseError::DuplicateVariable { line, .. }) => assert_eq!(line, 6),
+        other => panic!("{other:?}"),
+    }
+    // Unknown header key on line 3.
+    let content = "--\nname: p\nbogus: 1\nparams:\n  x:\n    type: string\n--\n[[[X]]]\n";
+    match PromptParser::parse(content) {
+        Err(PromptParseError::InvalidHeaderKey { line, key }) => assert_eq!((line, key.as_str()), (3, "bogus")),
+        other => panic!("{other:?}"),
+    }
+    // The message itself names the line.
+    let msg = PromptParser::parse("--\nname: p\nparams:\n  x:\n    def: 1\n--\nb\n").unwrap_err().to_string();
+    assert!(msg.starts_with("line 4:"), "{msg}");
+}
+
 // --- Indentation uses spaces only (RFC §2) ---
 
 #[test]
@@ -1184,11 +1213,11 @@ fn test_tab_indentation_is_error() {
     // Two tabs happen to count as two columns, so this used to parse.
     let content = "--\nname: p\nparams:\n\t\tx:\n\t\t\t\ttype: string\n--\n[[[X]]]\n";
     let res = PromptParser::parse(content);
-    assert!(matches!(res, Err(PromptParseError::TabIndentation(_))), "{:?}", res);
+    assert!(matches!(res, Err(PromptParseError::TabIndentation { .. })), "{:?}", res);
     // A tab in a block-list item's indentation is rejected too.
     let content = "--\nname: p\nparams:\n  xs:\n    type: list\n    etype: string\n    def:\n\t\t\t\t\t\t- \"a\"\n--\n[[[XS]]]\n";
     let res = PromptParser::parse(content);
-    assert!(matches!(res, Err(PromptParseError::TabIndentation(_))), "{:?}", res);
+    assert!(matches!(res, Err(PromptParseError::TabIndentation { .. })), "{:?}", res);
 }
 
 // --- `type` is required (RFC §3) ---
@@ -1988,7 +2017,7 @@ fn test_leading_triple_dash_is_error() {
     // '--'-prefixed line (e.g. '---'), silently treating it as the opener.
     let content = "---\nname: p\nparams:\n  x:\n    type: string\n    def: \"hi\"\n--\nBody text.\n";
     let res = PromptParser::parse(content);
-    assert!(matches!(res, Err(PromptParseError::UnexpectedLine(_))), "{:?}", res);
+    assert!(matches!(res, Err(PromptParseError::UnexpectedLine { .. })), "{:?}", res);
 }
 
 #[test]

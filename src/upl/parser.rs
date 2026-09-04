@@ -155,30 +155,30 @@ pub enum PromptParseError {
     MissingHeaderDelimiter,
     #[error("File missing closing delimiter '--' after header")]
     MissingClosingHeaderDelimiter,
-    #[error("Invalid header key: '{0}'")]
-    InvalidHeaderKey(String),
+    #[error("line {line}: invalid key '{key}'")]
+    InvalidHeaderKey { line: usize, key: String },
     #[error("Missing required 'name' metadata field")]
     MissingName,
     #[error("Missing required 'params' metadata block")]
     MissingParams,
-    #[error("Tab character used for indentation (RFC §2: indentation uses spaces only): '{0}'")]
-    TabIndentation(String),
-    #[error("Variable '{name}' has no 'type' (RFC §3: type is required)")]
-    MissingType { name: String },
-    #[error("Invalid variable name '{name}': declarations must be lowercase alphanumeric (UTF-8) characters and underscores")]
-    InvalidVariableName { name: String },
+    #[error("line {line}: tab character used for indentation (RFC §2: indentation uses spaces only): '{text}'")]
+    TabIndentation { line: usize, text: String },
+    #[error("line {line}: variable '{name}' has no 'type' (RFC §3: type is required)")]
+    MissingType { line: usize, name: String },
+    #[error("line {line}: invalid variable name '{name}': declarations must be lowercase alphanumeric (UTF-8) characters and underscores")]
+    InvalidVariableName { line: usize, name: String },
     #[error("Invalid 'name' value '{name}': must be non-empty and contain only lowercase alphanumeric (UTF-8) characters and underscores")]
     InvalidName { name: String },
     #[error("prompt file must use the '.txt' or '.upl' extension")]
     InvalidExtension { path: String },
     #[error("prompt name '{name}' does not match file base name '{base}'")]
     NameFileMismatch { name: String, base: String },
-    #[error("Expected key-value pair but found: '{0}'")]
-    UnexpectedLine(String),
+    #[error("line {line}: expected a 'key: value' pair but found: '{text}'")]
+    UnexpectedLine { line: usize, text: String },
     #[error("Expected '{expected}' but got '{got}'")]
     ExpectedButGot { expected: String, got: String },
-    #[error("Invalid indentation: expected {expected} spaces but got {actual}")]
-    IndentationError { expected: usize, actual: usize },
+    #[error("line {line}: invalid indentation: expected {expected} spaces but got {actual}")]
+    IndentationError { line: usize, expected: usize, actual: usize },
     #[error("Nested 'ofields' must only appear in 'object' or 'object_shape' type")]
     InvalidNestedInNonObject { field: String },
     #[error("Field '{field}' has invalid type '{value}'")]
@@ -229,10 +229,10 @@ pub enum PromptParseError {
     },
     #[error("Default for '{path}' is not one of its declared opts: {value}")]
     DefaultNotInOpts { path: String, value: String },
-    #[error("Heredoc 'def: >>>' is only allowed for 'long_string' variables")]
-    HeredocNotLongString { field: String },
-    #[error("Heredoc 'def: >>>' is missing its terminating '<<<' line")]
-    MissingHeredocTerminator,
+    #[error("line {line}: heredoc 'def: >>>' on '{field}' is only allowed for 'long_string' variables (declare 'type: long_string' before it)")]
+    HeredocNotLongString { line: usize, field: String },
+    #[error("line {line}: heredoc 'def: >>>' is missing its terminating '<<<' line")]
+    MissingHeredocTerminator { line: usize },
     #[error("Loop 'for' missing 'end for'")]
     MissingEndFor,
     #[error("Unmatched '{{{{{{' found in body")]
@@ -282,8 +282,8 @@ pub enum PromptParseError {
     },
     #[error("condition operator '{op}': {detail}")]
     ConditionOperatorTypeError { op: String, detail: String },
-    #[error("Variable '{name}' is declared more than once in the same block")]
-    DuplicateVariable { name: String },
+    #[error("line {line}: variable '{name}' is declared more than once in the same block")]
+    DuplicateVariable { line: usize, name: String },
     #[error("Content found after the body's '--' terminator (a bare '--' line inside the body is treated as the terminator, so nothing may follow it): '{0}'")]
     ContentAfterBodyTerminator(String),
 }
@@ -339,19 +339,25 @@ struct Binding<'a> {
 /// Reject a tab anywhere in a line's leading whitespace (RFC §2: spaces
 /// only). `trim_start` strips tabs too, so without this check a tab counted
 /// as one column and a tab-indented block could parse by accident.
-fn check_no_tab_indent(line: &str) -> Result<(), PromptParseError> {
+fn check_no_tab_indent(line: &str, line_no: usize) -> Result<(), PromptParseError> {
     let leading = &line[..line.len() - line.trim_start().len()];
     if leading.contains('\t') {
-        return Err(PromptParseError::TabIndentation(line.to_string()));
+        return Err(PromptParseError::TabIndentation {
+            line: line_no,
+            text: line.to_string(),
+        });
     }
     Ok(())
 }
 
 // --- Extract value from key-value line ---
-fn extract_kv(line: &str) -> Result<(String, String), PromptParseError> {
+fn extract_kv(line: &str, line_no: usize) -> Result<(String, String), PromptParseError> {
     let parts: Vec<&str> = line.splitn(2, ':').collect();
     if parts.len() != 2 {
-        return Err(PromptParseError::UnexpectedLine(line.to_string()));
+        return Err(PromptParseError::UnexpectedLine {
+            line: line_no,
+            text: line.to_string(),
+        });
     }
     let key = parts[0].trim().to_string();
     let val = parts[1].trim().to_string();
@@ -559,20 +565,22 @@ impl PromptParser {
                 continue;
             }
 
-            if let Ok((k, v)) = extract_kv(line) {
-                match k.as_str() {
-                    "params" => {
-                        header.insert(k, v);
-                        ctx.pos += 1;
-                        return Ok(header); // validate_params consumes the indented block
-                    }
-                    "name" | "title" | "desc" | "source" => {
-                        header.insert(k, v);
-                    }
-                    _ => return Err(PromptParseError::InvalidHeaderKey(k)),
+            let (k, v) = extract_kv(line, ctx.pos + 1)?;
+            match k.as_str() {
+                "params" => {
+                    header.insert(k, v);
+                    ctx.pos += 1;
+                    return Ok(header); // validate_params consumes the indented block
                 }
-            } else {
-                return Err(PromptParseError::UnexpectedLine(line.to_string()));
+                "name" | "title" | "desc" | "source" => {
+                    header.insert(k, v);
+                }
+                _ => {
+                    return Err(PromptParseError::InvalidHeaderKey {
+                        line: ctx.pos + 1,
+                        key: k,
+                    })
+                }
             }
             ctx.pos += 1;
         }
@@ -824,21 +832,26 @@ impl PromptParser {
             if stripped == "--" || cur_indent < indent {
                 break;
             }
-            check_no_tab_indent(line)?;
+            check_no_tab_indent(line, pos + 1)?;
             if cur_indent != indent {
                 return Err(PromptParseError::IndentationError {
+                    line: pos + 1,
                     expected: indent,
                     actual: cur_indent,
                 });
             }
 
-            let (key, _val) = extract_kv(stripped)?;
+            let decl_line = pos + 1;
+            let (key, _val) = extract_kv(stripped, decl_line)?;
             // Declarations are lowercase identifiers (RFC §2): the same
             // charset as the prompt `name`. Anything else (uppercase,
             // hyphens, spaces) can't be referenced reliably from the body
             // or conditions.
             if !is_valid_name(&key) {
-                return Err(PromptParseError::InvalidVariableName { name: key });
+                return Err(PromptParseError::InvalidVariableName {
+                    line: decl_line,
+                    name: key,
+                });
             }
             let var_name = if prefix.is_empty() {
                 key.clone()
@@ -876,15 +889,16 @@ impl PromptParser {
                 if pindent <= indent {
                     break;
                 }
-                check_no_tab_indent(pline)?;
+                check_no_tab_indent(pline, pos + 1)?;
                 if pindent != indent + 2 {
                     return Err(PromptParseError::IndentationError {
+                        line: pos + 1,
                         expected: indent + 2,
                         actual: pindent,
                     });
                 }
 
-                let (pk, pv) = extract_kv(pstripped)?;
+                let (pk, pv) = extract_kv(pstripped, pos + 1)?;
                 match pk.as_str() {
                     "type" => {
                         // `type` accepts either a built-in type name (§3.1)
@@ -951,6 +965,7 @@ impl PromptParser {
                             // is `<<<`, then store the value verbatim.
                             if def.r#type != VariableType::LongString {
                                 return Err(PromptParseError::HeredocNotLongString {
+                                    line: pos + 1,
                                     field: var_name.clone(),
                                 });
                             }
@@ -969,7 +984,7 @@ impl PromptParser {
                                 p += 1;
                             }
                             if !found {
-                                return Err(PromptParseError::MissingHeredocTerminator);
+                                return Err(PromptParseError::MissingHeredocTerminator { line: pos + 1 });
                             }
                             // Drop the trailing newline added after the last
                             // content line so the value is the joined lines
@@ -998,7 +1013,7 @@ impl PromptParser {
                                 if !(istripped.starts_with("- ") || istripped == "-") {
                                     break;
                                 }
-                                check_no_tab_indent(iline)?;
+                                check_no_tab_indent(iline, p + 1)?;
                                 let item_val = istripped
                                     .strip_prefix('-')
                                     .map(|s| s.trim())
@@ -1047,7 +1062,7 @@ impl PromptParser {
                                 if !(istripped.starts_with("- ") || istripped == "-") {
                                     break;
                                 }
-                                check_no_tab_indent(iline)?;
+                                check_no_tab_indent(iline, pos + 1)?;
                                 let item_val = istripped
                                     .strip_prefix('-')
                                     .map(|s| s.trim())
@@ -1084,7 +1099,10 @@ impl PromptParser {
                         pos = new_pos;
                     }
                     other => {
-                        return Err(PromptParseError::InvalidHeaderKey(other.to_string()));
+                        return Err(PromptParseError::InvalidHeaderKey {
+                            line: pos + 1,
+                            key: other.to_string(),
+                        });
                     }
                 }
             }
@@ -1092,10 +1110,16 @@ impl PromptParser {
             // `type` is required on every declaration (RFC §3); without this
             // check a typeless variable silently became a `string`.
             if !type_seen {
-                return Err(PromptParseError::MissingType { name: var_name });
+                return Err(PromptParseError::MissingType {
+                    line: decl_line,
+                    name: var_name,
+                });
             }
             if var_defs.contains_key(&key) {
-                return Err(PromptParseError::DuplicateVariable { name: var_name });
+                return Err(PromptParseError::DuplicateVariable {
+                    line: decl_line,
+                    name: var_name,
+                });
             }
             var_defs.insert(key.clone(), def);
         }
