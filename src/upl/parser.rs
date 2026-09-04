@@ -705,21 +705,7 @@ impl PromptParser {
             // supply. Mirrors the `type_ref` copy below exactly, except the
             // destination here is a template shared by every element
             // instead of one fixed inheriting path.
-            let src_prefix = format!("{}.", target_name);
-            let copies: Vec<(String, VariableValue)> = defaults
-                .iter()
-                .filter_map(|(k, v)| {
-                    if k.starts_with(&src_prefix) {
-                        let rest = &k[src_prefix.len()..];
-                        Some((format!("{}.{}", path, rest), v.clone()))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            for (k, v) in copies {
-                defaults.entry(k).or_insert(v);
-            }
+            Self::copy_shape_defaults(&target_name, path, defaults);
             // Normalize the ref to the target's declared name so downstream
             // default lookup (keyed by declared name) is case-insensitive.
             def.element_ref = Some(target_name);
@@ -755,24 +741,7 @@ impl PromptParser {
             visiting.remove(&refname.to_lowercase());
             def.type_ref = Some(target_name.clone());
             def.ofields_definitions = Some(nested);
-            // Copy the object_shape's field defaults (every key starting with
-            // `<target_name>.`) into this object's path, re-keyed under
-            // `<path>.`.
-            let src_prefix = format!("{}.", target_name);
-            let copies: Vec<(String, VariableValue)> = defaults
-                .iter()
-                .filter_map(|(k, v)| {
-                    if k.starts_with(&src_prefix) {
-                        let rest = &k[src_prefix.len()..];
-                        Some((format!("{}.{}", path, rest), v.clone()))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            for (k, v) in copies {
-                defaults.entry(k).or_insert(v);
-            }
+            Self::copy_shape_defaults(&target_name, path, defaults);
         }
         // Then recurse into this definition's own ofields — but only when the
         // ofields were declared inline (no element_ref / type_ref was just
@@ -788,6 +757,39 @@ impl PromptParser {
             }
         }
         Ok(())
+    }
+
+    /// Bring an `object_shape`'s declared defaults to a site that references
+    /// it (RFC §3, `def` row: "the declared def/field defaults are applied at
+    /// every site that references the object_shape"):
+    ///
+    /// 1. every field-level default (`<shape>.<field>...`) is copied under
+    ///    `<path>.<field>...`, and
+    /// 2. the shape's own object-level `def` literal, if any, is flattened
+    ///    per key onto `<path>.<key>`, overriding the copied field default
+    ///    for that key — the same per-key precedence §3 gives a literal over
+    ///    field defaults. A site's own `def` literal still merges on top of
+    ///    all of this at render time.
+    ///
+    /// `path` is the reuse site: an `object` (`cfg`) or a list/option
+    /// (`servers`, whose elements look defaults up as `servers.<field>`).
+    fn copy_shape_defaults(target_name: &str, path: &str, defaults: &mut VariableDefaults) {
+        let src_prefix = format!("{}.", target_name);
+        let copies: Vec<(String, VariableValue)> = defaults
+            .iter()
+            .filter_map(|(k, v)| {
+                k.strip_prefix(&src_prefix)
+                    .map(|rest| (format!("{}.{}", path, rest), v.clone()))
+            })
+            .collect();
+        for (k, v) in copies {
+            defaults.entry(k).or_insert(v);
+        }
+        if let Some(VariableValue::Object(lit)) = defaults.get(target_name).cloned() {
+            for (k, v) in lit {
+                defaults.insert(format!("{}.{}", path, k), v);
+            }
+        }
     }
 
     // Recursive, indentation-driven parser for a block of sibling variable

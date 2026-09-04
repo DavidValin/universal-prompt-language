@@ -1571,6 +1571,51 @@ params:
 }
 
 #[test]
+fn integration_object_shape_level_def_applies_at_reference_sites() {
+    // RFC §3 (`def` row): an object_shape's declared def/field defaults are
+    // applied at every site that references it. The shape's object-level
+    // literal wins per key over its field defaults; a site's own literal
+    // still wins over both.
+    let upl = "\
+--
+name: p
+params:
+  ph:
+    type: object_shape
+    ofields:
+      name:
+        type: string
+        def: \"Socrates\"
+      era:
+        type: number
+        def: -470
+    def: { name: \"Plato\" }
+  focal:
+    type: ph
+  own:
+    type: ph
+    def: { era: 1 }
+  many:
+    type: list
+    etype: ph
+    def:
+      - { era: 2 }
+  pick:
+    type: option_single
+    etype: ph
+    label: name
+    opts:
+      - { name: \"Plato\", era: 3 }
+      - { name: \"Zeno\", era: 4 }
+--
+[[[FOCAL.NAME]]]/[[[FOCAL.ERA]]] [[[OWN.NAME]]]/[[[OWN.ERA]]] {{{for P in MANY}}}[[[P.NAME]]]/[[[P.ERA]]]{{{end for}}} [[[PICK.NAME]]]/[[[PICK.ERA]]]
+--
+";
+    let out = PromptBuilder::new(parse(upl)).render_with_defaults().unwrap();
+    assert_eq!(out, "Plato/-470 Plato/1 Plato/2 Plato/3\n");
+}
+
+#[test]
 fn integration_object_type_ref_forward_reference() {
     // The inheriting object may be declared before the object_shape it names.
     let upl = "\
