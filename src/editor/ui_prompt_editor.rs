@@ -1140,13 +1140,14 @@ fn compute_block_bgs(lines: &[Vec<char>]) -> Vec<Block> {
     out
 }
 
-/// Is the delimiter starting at byte index `idx` in `s` escaped (RFC §4.5:
-/// a backslash immediately before `{{{`/`[[[` escapes it to literal text)?
-/// An odd number of consecutive backslashes immediately preceding `idx`
-/// means it's escaped; an even number (including zero) means it isn't,
-/// since each pair of backslashes is itself an escaped literal backslash.
+/// Is the delimiter starting at byte index `idx` in `s` escaped? RFC §4.5:
+/// a backslash immediately before `{{{`/`[[[` escapes it to literal text,
+/// and there is no general backslash escape — `\\{{{` is a literal `\`
+/// followed by an *escaped* `{{{` — so any backslash directly before the
+/// delimiter escapes it, whatever precedes that backslash. This mirrors the
+/// parser exactly.
 fn is_escaped_at(s: &str, idx: usize) -> bool {
-    s[..idx].chars().rev().take_while(|&c| c == '\\').count() % 2 == 1
+    s[..idx].ends_with('\\')
 }
 
 /// Does `needle` occur in `s` at a position that isn't escaped (§4.5)?

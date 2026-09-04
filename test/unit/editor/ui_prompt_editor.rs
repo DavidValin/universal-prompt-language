@@ -104,12 +104,15 @@ fn escaped_placeholder_not_detected() {
 }
 
 #[test]
-fn double_escaped_backslash_still_detects_placeholder() {
-    // `\\[[[` is a literal `\` followed by a REAL placeholder (the second
-    // backslash of the pair escapes the first, not the delimiter).
+fn double_backslash_still_escapes_placeholder() {
+    // RFC §4.5: there is no general backslash escape, so `\\[[[` is a
+    // literal `\` followed by an *escaped* `[[[` — not a placeholder. The
+    // parser renders it as `\[[[VAR]]]`; the editor must not highlight it.
     let line: Vec<char> = "\\\\[[[VAR]]]".chars().collect();
     let spans = find_placeholders(&line);
-    assert_eq!(spans, vec![(2, 11)]);
+    assert_eq!(spans, Vec::<(usize, usize)>::new());
+    let body = "\\\\{{{for X in Y}}}\nplain\n";
+    assert_eq!(compute_block_bgs(&chars(body)), vec![Block::None, Block::None, Block::None]);
 }
 
 #[test]
