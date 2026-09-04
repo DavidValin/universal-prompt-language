@@ -2597,14 +2597,22 @@ fn tokenize_cond(s: &str) -> Result<Vec<Tok>, PromptParseError> {
             let quote = c;
             let mut j = i + 1;
             let mut buf = String::new();
+            let mut closed = false;
             while j < s.len() {
                 let ch = s[j..].chars().next().unwrap();
                 if ch == quote {
                     j += 1;
+                    closed = true;
                     break;
                 }
                 buf.push(ch);
                 j += ch.len_utf8();
+            }
+            if !closed {
+                return Err(PromptParseError::InvalidConditionSyntax(format!(
+                    "unterminated string literal starting at {}{}",
+                    quote, buf
+                )));
             }
             toks.push(Tok::Str(buf));
             i = j;

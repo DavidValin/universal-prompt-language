@@ -403,6 +403,14 @@ fn test_bracketed_variable_in_operator_condition_is_error() {
 }
 
 #[test]
+fn test_unterminated_string_literal_in_condition_is_error() {
+    let res = Template::parse("{{{if S = \"x}}}yes{{{end if}}}");
+    assert!(matches!(res, Err(PromptParseError::InvalidConditionSyntax(_))), "{:?}", res);
+    let res = Template::parse("{{{S = 'x ? \"a\" : \"b\"}}}");
+    assert!(matches!(res, Err(PromptParseError::InvalidConditionSyntax(_))), "{:?}", res);
+}
+
+#[test]
 fn test_uppercase_identifiers_parse_clean() {
     let res = Template::parse("{{{for ITEM in ITEMS}}}- [[[ITEM]]]\n{{{end for}}}");
     assert!(res.is_ok());
