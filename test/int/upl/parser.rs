@@ -1044,6 +1044,52 @@ params:
 }
 
 #[test]
+fn test_option_object_entry_must_match_shape() {
+    // RFC §3.3: an object opts entry must match the shape — a field of the
+    // wrong kind or a key the shape doesn't declare is a parse error.
+    let bad_kind = r#"--
+name: p
+params:
+  f:
+    type: object_shape
+    ofields:
+      name:
+        type: string
+      enabled:
+        type: boolean
+  pick:
+    type: option_single
+    etype: f
+    label: name
+    opts:
+      - { name: "auth", enabled: "yes" }
+      - { name: "logs", enabled: true }
+--
+[[[PICK.NAME]]]
+"#;
+    let res = PromptParser::parse(bad_kind);
+    assert!(matches!(res, Err(PromptParseError::OptionEntryTypeMismatch { index: 1, .. })), "{:?}", res);
+    let unknown_key = r#"--
+name: p
+params:
+  pick:
+    type: option_multi
+    etype: object
+    label: name
+    ofields:
+      name:
+        type: string
+    opts:
+      - { name: "a" }
+      - { name: "b", extra: 1 }
+--
+[[[PICK]]]
+"#;
+    let res = PromptParser::parse(unknown_key);
+    assert!(matches!(res, Err(PromptParseError::OptionEntryTypeMismatch { index: 2, .. })), "{:?}", res);
+}
+
+#[test]
 fn test_list_inline_object_etype_without_ofields_is_error() {
     let content = r#"--
 name: p

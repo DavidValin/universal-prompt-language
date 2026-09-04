@@ -615,6 +615,11 @@ impl PromptParser {
         // them under the inheriting object.
         Self::resolve_element_refs(&mut var_defs, &mut defaults)?;
 
+        // Check object-shaped `opts` entries against their element shape and
+        // complete them from the shape's field defaults (RFC §3.3 / §3.4), so
+        // every downstream comparison against `opts` sees full objects.
+        Self::canonicalize_options(&mut var_defs, &defaults, "")?;
+
         // Validate cross-field consistency (opts/etype/label/def) now that
         // element references have been resolved into
         // `element_type`/`ofields_definitions`.
@@ -1098,6 +1103,76 @@ impl PromptParser {
         Ok(pos)
     }
 
+    /// For every `option_single`/`option_multi` with an object-shaped etype
+    /// (top-level or nested), check each `opts` object literal against the
+    /// element shape — every key must name a declared field and every value
+    /// must match that field's type (RFC §3.3: "an object literal matching
+    /// the ... `ofields` shape") — then complete it with the shape's field
+    /// defaults (RFC §3.4), storing the canonical full object. Membership
+    /// tests (a `def`, JSON input, an interactive pick) then compare like
+    /// with like: a partially written option and the same option written
+    /// out in full are the same option.
+    fn canonicalize_options(
+        defs: &mut VariableDefinitions,
+        defaults: &VariableDefaults,
+        prefix: &str,
+    ) -> Result<(), PromptParseError> {
+        for (name, def) in defs.iter_mut() {
+            let path = if prefix.is_empty() {
+                name.clone()
+            } else {
+                format!("{}.{}", prefix, name)
+            };
+            let is_option = matches!(def.r#type, VariableType::OptionSingle | VariableType::OptionMulti);
+            let is_object_etype =
+                def.element_type == Some(VariableType::Object) || def.element_ref.is_some();
+            if is_option && is_object_etype {
+                if let (Some(opts), Some(ofields)) = (def.options.clone(), def.ofields_definitions.as_ref()) {
+                    let mut canonical = Vec::with_capacity(opts.len());
+                    for (i, entry) in opts.iter().enumerate() {
+                        if let VariableValue::Object(map) = entry {
+                            for (k, v) in map {
+                                let kl = k.to_lowercase();
+                                let field = ofields.iter().find(|(fk, _)| fk.to_lowercase() == kl);
+                                let Some((fname, fdef)) = field else {
+                                    return Err(PromptParseError::OptionEntryTypeMismatch {
+                                        index: i + 1,
+                                        etype: "Object".into(),
+                                        value: format!(
+                                            "unknown field '{}' (not declared on the object shape of '{}')",
+                                            k, path
+                                        ),
+                                    });
+                                };
+                                let fpath = format!("{}.{}", path, fname);
+                                if Self::validate_default_value(&fpath, fdef, v).is_err() {
+                                    return Err(PromptParseError::OptionEntryTypeMismatch {
+                                        index: i + 1,
+                                        etype: "Object".into(),
+                                        value: format!(
+                                            "field '{}' has wrong value kind for its declared type {:?}: {:?}",
+                                            k, fdef.r#type, v
+                                        ),
+                                    });
+                                }
+                            }
+                            canonical.push(fill_element_defaults(defaults, &path, def, entry));
+                        } else {
+                            // Not an object: left as-is for validate_definition
+                            // to report as an etype mismatch.
+                            canonical.push(entry.clone());
+                        }
+                    }
+                    def.options = Some(canonical);
+                }
+            }
+            if let Some(nested) = def.ofields_definitions.as_mut() {
+                Self::canonicalize_options(nested, defaults, &path)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Walk every definition (top-level and nested inside `ofields`) and run
     /// `validate_definition` on each. Paths are dotted so error messages can
     /// point at the offending nested field. `defaults` is the flat dotted-key
@@ -1410,7 +1485,10 @@ impl PromptParser {
                         _ => vec![default],
                     };
                     for v in candidates {
-                        if !opts.iter().any(|o| o == v) {
+                        // Compare the completed form (opts are canonical
+                        // by now) so a partially written def matches.
+                        let full = fill_element_defaults(defaults, path, def, v);
+                        if !opts.iter().any(|o| *o == full) {
                             return Err(PromptParseError::DefaultNotInOpts {
                                 path: path.to_string(),
                                 value: format!("{:?}", v),

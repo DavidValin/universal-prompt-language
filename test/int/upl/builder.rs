@@ -2688,6 +2688,43 @@ params:
 }
 
 #[test]
+fn json_option_object_partial_opts_entries_are_completed() {
+    // `opts` object literals are completed from the shape's field defaults
+    // at parse time, so a JSON value (which is completed the same way)
+    // matches an option written partially, and a partial `def` does too.
+    let upl = "\
+--
+name: p
+params:
+  f:
+    type: object_shape
+    ofields:
+      name:
+        type: string
+      enabled:
+        type: boolean
+        def: false
+  pick:
+    type: option_single
+    etype: f
+    label: name
+    opts:
+      - { name: \"auth\" }
+      - { name: \"logs\", enabled: true }
+    def: { name: \"logs\", enabled: true }
+--
+[[[PICK.NAME]]]:[[[PICK.ENABLED]]]
+--
+";
+    assert_eq!(build(upl, r#"{"pick": {"name": "auth"}}"#).unwrap(), "auth:false\n");
+    assert_eq!(build(upl, r#"{"pick": {"name": "auth", "enabled": false}}"#).unwrap(), "auth:false\n");
+    assert_eq!(build(upl, "{}").unwrap(), "logs:true\n");
+    let prompt = parse(upl);
+    let opts = prompt.variable_definitions["pick"].options.as_ref().unwrap();
+    assert!(matches!(&opts[0], VariableValue::Object(m) if m.len() == 2), "{:?}", opts[0]);
+}
+
+#[test]
 fn json_option_single_number() {
     let upl = "\
 --
