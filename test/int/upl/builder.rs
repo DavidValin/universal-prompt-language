@@ -3468,6 +3468,17 @@ fn test_method_call_contains() {
 }
 
 #[test]
+fn test_method_call_form_ignores_string_literals() {
+    // Only the operator position is rewritten; a literal containing
+    // ".contains(" stays a literal.
+    let out = render_str(
+        "{{{S = \"x.contains(y)\" ? \"eq\" : \"ne\"}}}",
+        &[("s", VariableValue::String("x.contains(y)".into()))],
+    );
+    assert_eq!(out, "eq");
+}
+
+#[test]
 fn test_method_call_starts_with() {
     let out = render_str(
         "{{{PATH.starts_with(\"/home\") ? \"yes\" : \"no\"}}}",

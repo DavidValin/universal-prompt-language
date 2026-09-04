@@ -2937,6 +2937,22 @@ fn normalize_method_calls(src: &str) -> String {
     let mut out = String::with_capacity(src.len());
     let mut i = 0;
     'outer: while i < src.len() {
+        // String literals are opaque: copy them through untouched so a
+        // literal such as "x.contains(y)" is never rewritten.
+        let c0 = src[i..].chars().next().unwrap();
+        if c0 == '"' || c0 == '\'' {
+            let mut j = i + 1;
+            while j < src.len() {
+                let ch = src[j..].chars().next().unwrap();
+                j += ch.len_utf8();
+                if ch == c0 {
+                    break;
+                }
+            }
+            out.push_str(&src[i..j]);
+            i = j;
+            continue;
+        }
         for (method, op) in &methods {
             let pat = format!(".{}", method);
             if !src[i..].starts_with(&pat) {
