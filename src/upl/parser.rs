@@ -275,6 +275,11 @@ pub enum PromptParseError {
         condition_param: String,
         referenced_param: String,
     },
+    #[error("'exclude_condition' on '{condition_param}' references '{referenced_param}', which is an object_shape type definition, not a parameter")]
+    ConditionRefersToObjectShape {
+        condition_param: String,
+        referenced_param: String,
+    },
     #[error("condition operator '{op}': {detail}")]
     ConditionOperatorTypeError { op: String, detail: String },
     #[error("Variable '{name}' is declared more than once in the same block")]
@@ -1477,6 +1482,14 @@ impl PromptParser {
                 // Must be a declared top-level parameter.
                 let v_lc = v.to_lowercase();
                 match names.iter().position(|n| n.to_lowercase() == v_lc) {
+                    // An object_shape is a type definition, never a collected
+                    // parameter, so it has no value to test at build time.
+                    Some(p) if defs[p].r#type == VariableType::ObjectShape => {
+                        return Err(PromptParseError::ConditionRefersToObjectShape {
+                            condition_param: name.clone(),
+                            referenced_param: v.clone(),
+                        });
+                    }
                     Some(p) if p < i => {} // OK — declared before
                     Some(_) => {
                         return Err(PromptParseError::ConditionRefersToLaterParam {

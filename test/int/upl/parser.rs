@@ -1585,6 +1585,15 @@ params:
 }
 
 #[test]
+fn test_condition_referencing_object_shape_is_error() {
+    // §3.7: a condition names previously-declared *parameters*; an
+    // object_shape is a type definition with no build-time value.
+    let content = "--\nname: p\nparams:\n  sh:\n    type: object_shape\n    ofields:\n      a:\n        type: string\n  x:\n    type: string\n    exclude_condition: SH\n    def: \"x\"\n--\n[[[X]]]\n";
+    let res = PromptParser::parse(content);
+    assert!(matches!(res, Err(PromptParseError::ConditionRefersToObjectShape { .. })), "{:?}", res);
+}
+
+#[test]
 fn test_condition_on_nested_field_is_error() {
     let content = r#"--
 name: p
