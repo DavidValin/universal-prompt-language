@@ -1,6 +1,6 @@
 # UPL — Universal Prompt Language
 
-* **Version:** 1.0-rc.4
+* **Version:** 1.0-rc.5
 * **Status:** Release Candidate
 * **File Extension:** `.txt` or `.upl`
 
