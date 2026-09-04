@@ -121,29 +121,58 @@ upl build --no-input samples/explain_subject.txt
 ```
 
 Once a prompt is built, you will see the output in screen which you can copy.
-You can also pass the prompt to another bash command via pipe, for example [ai-chat](https://www.github.com/sigoden/aichat).
+`upl` draws its browser and builder on **stderr** and writes only the final
+prompt to **stdout**, so the built prompt can be handed straight to another
+command.
+
+### Piping to a tool that waits for stdin
+
+Tools that simply read stdin until it closes, such as
+[aichat](https://www.github.com/sigoden/aichat), can be used with a plain pipe:
 
 ```bash
 upl b create_a_plan.txt | aichat
-```
 
-or to browse+build in one go and pass the built prompt:
-
-```bash
+# or browse, build and pass the built prompt in one go
 upl | aichat
 ```
 
-or
+### Passing the prompt to Claude Code (or another interactive tool)
+
+A plain pipe does **not** work with tools that open their own terminal UI as
+soon as they start, such as Claude Code or opencode: the shell launches both
+sides of `upl | claude` at the same time, so `claude` takes over the terminal
+while the `upl` browser is still open. Use command substitution instead. The
+shell then runs `upl` to completion first and only afterwards starts the
+tool with the built prompt:
 
 ```bash
-upl | claude
+# prompt as the first message (argument form)
+claude "$(upl)"
+claude "$(upl b samples/create_a_plan.txt)"
+
+# with flags — the prompt must stay the last argument
+claude --model opus "$(upl)"
+claude -p --output-format json "$(upl)"
+
+# prompt on stdin instead of as an argument (bash/zsh here-string)
+claude --model opus <<< "$(upl)"
+
+# same idea for opencode
+opencode "$(upl)"
 ```
 
-or
+If you cancel the build, `upl` prints nothing and exits non-zero, so a small
+shell function avoids launching the tool with an empty prompt:
 
 ```bash
-upl | opencode
+# usage: uplc [claude flags...]   e.g.  uplc --model opus -p
+uplc() { local p; p="$(upl)" && [ -n "$p" ] && claude "$@" "$p"; }
 ```
+
+Note that `printf '%s' "$(upl)" | claude` and `claude < <(upl)` do **not**
+help: both still start `claude` concurrently. Only `$(...)` — as an argument
+or via `<<<` — forces `upl` to finish first.
 
 ## Build a prompt from a JSON file
 
@@ -195,10 +224,12 @@ Type mapping:
 | `option_single` | a single value matching the `etype` and one of `opts` |
 | `option_multi` | array of values, each matching the `etype` and one of `opts` |
 
-The rendered prompt can be piped directly to an LLM tool:
+The rendered prompt can be piped directly to an LLM tool (there is no TUI in
+this mode, so a plain pipe works with any tool):
 
 ```bash
 upl build-from-json create_rest_api params.json | aichat
+upl build-from-json create_rest_api params.json | claude -p
 ```
 
 If what you want is a voice response from llm, check [vtmate](https://www.github.com/DavidValin/vtmate), example:
