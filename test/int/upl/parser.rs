@@ -1112,6 +1112,19 @@ fn test_bare_nan_and_inf_tokens_are_strings() {
     );
 }
 
+// --- `type` is required (RFC §3) ---
+
+#[test]
+fn test_variable_without_type_is_error() {
+    let content = "--\nname: p\nparams:\n  x:\n    def: \"a\"\n--\n[[[X]]]\n";
+    let res = PromptParser::parse(content);
+    assert!(matches!(res, Err(PromptParseError::MissingType { .. })), "{:?}", res);
+    // Nested fields too.
+    let content = "--\nname: p\nparams:\n  o:\n    type: object\n    ofields:\n      f:\n        def: \"a\"\n--\n[[[O.F]]]\n";
+    let res = PromptParser::parse(content);
+    assert!(matches!(res, Err(PromptParseError::MissingType { .. })), "{:?}", res);
+}
+
 // --- Duplicate declarations ---
 
 #[test]

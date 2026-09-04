@@ -161,6 +161,8 @@ pub enum PromptParseError {
     MissingName,
     #[error("Missing required 'params' metadata block")]
     MissingParams,
+    #[error("Variable '{name}' has no 'type' (RFC §3: type is required)")]
+    MissingType { name: String },
     #[error("Invalid variable name '{name}': declarations must be lowercase alphanumeric (UTF-8) characters and underscores")]
     InvalidVariableName { name: String },
     #[error("Invalid 'name' value '{name}': must be non-empty and contain only lowercase alphanumeric (UTF-8) characters and underscores")]
@@ -832,6 +834,7 @@ impl PromptParser {
 
             // Move to the first property line of this variable
             pos += 1;
+            let mut type_seen = false;
 
             // Parse the properties of this variable (expected at indent + 2)
             while pos < lines.len() {
@@ -865,6 +868,7 @@ impl PromptParser {
                         // referenced object_shape's `ofields` and confirms
                         // the target exists and is an `object_shape`.
                         let v = pv.trim();
+                        type_seen = true;
                         match Self::parse_type(v, "type") {
                             Ok(t) => def.r#type = t,
                             Err(_) => {
@@ -1056,6 +1060,11 @@ impl PromptParser {
                 }
             }
 
+            // `type` is required on every declaration (RFC §3); without this
+            // check a typeless variable silently became a `string`.
+            if !type_seen {
+                return Err(PromptParseError::MissingType { name: var_name });
+            }
             if var_defs.contains_key(&key) {
                 return Err(PromptParseError::DuplicateVariable { name: var_name });
             }
