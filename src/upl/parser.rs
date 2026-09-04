@@ -1467,8 +1467,8 @@ impl PromptParser {
             }
             let vars = collect_cond_var_names(cond);
             for v in &vars {
-                // Uppercase enforcement (§4.1).
-                if v.chars().any(|c| c.is_ascii_lowercase()) {
+                // Uppercase enforcement (§4.1), in any script.
+                if v.chars().any(|c| c.is_lowercase()) {
                     return Err(PromptParseError::LowercaseIdentifier {
                         name: v.clone(),
                         ctx: "condition".into(),
@@ -2372,11 +2372,13 @@ fn ensure_branch_uppercase(branch: &str) -> Result<(), PromptParseError> {
     Ok(())
 }
 
-/// Reject an identifier that contains any lowercase ASCII letter. Digits,
-/// underscores, dots, and uppercase letters are permitted.
+/// Reject an identifier that contains any lowercase letter — in any script,
+/// since declarations may use non-ASCII letters (RFC §2.1) and references
+/// must be their uppercase form. Digits, underscores, dots, and uppercase
+/// letters are permitted.
 fn ensure_uppercase(name: &str, ctx: &str) -> Result<(), PromptParseError> {
     let trimmed = name.trim();
-    if trimmed.chars().any(|c| c.is_ascii_lowercase()) {
+    if trimmed.chars().any(|c| c.is_lowercase()) {
         return Err(PromptParseError::LowercaseIdentifier {
             name: trimmed.to_string(),
             ctx: ctx.to_string(),

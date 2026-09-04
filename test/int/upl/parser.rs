@@ -326,6 +326,17 @@ fn test_lowercase_placeholder_is_error() {
 }
 
 #[test]
+fn test_non_ascii_lowercase_reference_is_error() {
+    // The uppercase rule (§4.1) applies to every script: `ñ` is lowercase.
+    let res = Template::parse("[[[AñO]]]");
+    assert!(matches!(res, Err(PromptParseError::LowercaseIdentifier { .. })), "{:?}", res);
+    assert!(Template::parse("[[[AÑO]]]").is_ok());
+    let content = "--\nname: p\nparams:\n  año:\n    type: string\n    def: \"x\"\n  b:\n    type: string\n    exclude_condition: AñO = \"x\"\n--\n[[[B]]]\n";
+    let res = PromptParser::parse(content);
+    assert!(matches!(res, Err(PromptParseError::LowercaseIdentifier { .. })), "{:?}", res);
+}
+
+#[test]
 fn test_lowercase_dotted_path_segment_is_error() {
     let res = Template::parse("[[[SERVER.host]]]");
     assert!(matches!(res, Err(PromptParseError::LowercaseIdentifier { .. })));
