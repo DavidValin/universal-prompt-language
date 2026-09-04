@@ -1,0 +1,8 @@
+# Normalize line endings so byte-exact content is identical on every platform.
+# The sample prompts are embedded with include_str! and matched by sha256
+# against samples/tags_db (see src/seed.rs); a CRLF checkout on Windows would
+# change their hashes and break both the seed test and the seeded tag links.
+* text=auto eol=lf
+samples/tags_db binary
+*.png binary
+*.gif binary
