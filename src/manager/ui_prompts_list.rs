@@ -18,8 +18,8 @@ use crossterm::{
         Attribute, Color, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor,
     },
     terminal::{
-        self, Clear, ClearType, DisableLineWrap, EnableLineWrap, EnterAlternateScreen,
-        LeaveAlternateScreen,
+        self, BeginSynchronizedUpdate, Clear, ClearType, DisableLineWrap, EnableLineWrap,
+        EndSynchronizedUpdate, EnterAlternateScreen, LeaveAlternateScreen,
     },
 };
 
@@ -362,12 +362,19 @@ fn render_list<W: Write>(
         }
     }
 
-    // Render
+    // Render. Every line is repainted in place with a per-line clear
+    // instead of a full-screen `Clear(ClearType::All)`: a full clear makes
+    // the terminal paint a blank frame before the new content arrives,
+    // which shows up as a flicker on every keypress. The whole frame is
+    // additionally wrapped in a synchronized update so terminals that
+    // support it (kitty, iTerm2, WezTerm, foot, recent xterm/VTE, ...)
+    // paint it atomically; others ignore the sequence.
     let sep_width = cols as usize;
     queue! {
         stdout,
-        Clear(ClearType::All),
+        BeginSynchronizedUpdate,
         cursor::MoveTo(INDENT as u16, title_y),
+        Clear(ClearType::CurrentLine),
         SetAttribute(Attribute::Bold),
         SetForegroundColor(Color::Cyan),
         Print("UPL Prompts"),
@@ -381,16 +388,19 @@ fn render_list<W: Write>(
         }),
         ResetColor,
         cursor::MoveTo(0, sep1_y),
+        Clear(ClearType::CurrentLine),
         SetForegroundColor(Color::DarkGrey),
         Print(&"─".repeat(sep_width)),
         ResetColor,
         cursor::MoveTo(INDENT as u16, header_y),
+        Clear(ClearType::CurrentLine),
         SetAttribute(Attribute::Bold),
         SetForegroundColor(Color::Cyan),
         Print(header_line(&layout)),
         ResetColor,
         SetAttribute(Attribute::Reset),
         cursor::MoveTo(INDENT as u16, separator_y),
+        Clear(ClearType::CurrentLine),
         SetForegroundColor(Color::DarkGrey),
         Print(separator_line(&layout)),
         ResetColor,
@@ -407,8 +417,10 @@ fn render_list<W: Write>(
         )?;
     }
 
+    let mut drawn_rows = 0usize;
     for (i, row) in filtered.iter().copied().enumerate().skip(*top).take(body_height) {
         let y = body_start + (i - *top) as u16;
+        drawn_rows += 1;
         let tags_count = store.tags_for_prompt(&row.sha256).len();
         let line = row_line(row, tags_count, &layout);
         queue!(
@@ -434,6 +446,17 @@ fn render_list<W: Write>(
                 ResetColor,
             )?;
         }
+    }
+
+    // Wipe body lines below the last drawn row so rows from a previous,
+    // longer frame (e.g. before a tag filter was applied, or after the
+    // tags bar disappeared) don't linger on screen.
+    if filtered.is_empty() {
+        // The "(no results)" line occupies the first body row.
+        drawn_rows = drawn_rows.max(1);
+    }
+    for y in (body_start + drawn_rows as u16)..body_bottom {
+        queue!(stdout, cursor::MoveTo(0, y), Clear(ClearType::CurrentLine))?;
     }
 
     // Selected-tags bar (drawn on top of the footer when filtering).
@@ -468,6 +491,7 @@ fn render_list<W: Write>(
         Print(instructions),
         ResetColor,
         cursor::MoveTo(0, footer_y),
+        EndSynchronizedUpdate,
     )?;
 
     Ok((filtered.len(), body_height))
@@ -492,7 +516,12 @@ fn run_tui(rows: &[Row], no_history: bool, broken: usize) -> Result<TuiOutcome, 
     // Render the TUI on stderr (not stdout) so that stdout stays clean for
     // the final rendered prompt, allowing `upl list > out.txt` to capture
     // the build while the UI is still visible on the terminal.
-    let mut stdout = io::stderr();
+    //
+    // stderr is unbuffered, so without a `BufWriter` each `queue!` would hit
+    // the terminal as its own write and the frame would be painted piece by
+    // piece (visible as flicker while navigating). Buffering means a whole
+    // frame reaches the terminal in a single write on `flush()`.
+    let mut stdout = io::BufWriter::with_capacity(64 * 1024, io::stderr());
     execute!(
         stdout,
         EnterAlternateScreen,
@@ -676,6 +705,10 @@ fn run_tui(rows: &[Row], no_history: bool, broken: usize) -> Result<TuiOutcome, 
                 Event::Resize(c, l) => {
                     cols = c;
                     lines = l;
+                    // Geometry changed: the per-line repaint can't know
+                    // which old cells are stale, so clear everything once.
+                    queue!(stdout, Clear(ClearType::All))
+                        .map_err(|e| ListError::Tui(e.to_string()))?;
                 }
                 _ => {}
             }
