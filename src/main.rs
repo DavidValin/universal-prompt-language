@@ -43,7 +43,7 @@ fn usage(prog: &str) {
     eprintln!("  {prog} del <prompt_name>");
     eprintln!("  {prog} set-rep <host:port> [--tls] [gpg_key_file]");
     eprintln!("  {prog} get-rep");
-    eprintln!("  {prog} start_repository <tls_cert> [bind_addr]");
+    eprintln!("  {prog} start_repository [tls_cert] [bind_addr]");
     eprintln!("  {prog} register_user");
     eprintln!("  {prog} delete_user <username>");
     eprintln!();

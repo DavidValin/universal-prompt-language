@@ -828,11 +828,20 @@ impl PromptParser {
                 pos += 1;
                 continue;
             }
-            // A delimiter or a line at lower indentation ends this block
-            if stripped == "--" || cur_indent < indent {
+            // A delimiter ends this block.
+            if stripped == "--" {
                 break;
             }
+            // The tab check runs *before* the dedent break below: a tab
+            // counts as a single column, so a tab-indented line usually
+            // lands at a lower indent than expected and would silently end
+            // the block (swallowing the rest of `params` into the body)
+            // instead of being reported as the RFC §2 violation it is.
             check_no_tab_indent(line, pos + 1)?;
+            // A line at lower indentation ends this block
+            if cur_indent < indent {
+                break;
+            }
             if cur_indent != indent {
                 return Err(PromptParseError::IndentationError {
                     line: pos + 1,
@@ -885,11 +894,16 @@ impl PromptParser {
                     pos += 1;
                     continue;
                 }
+                // Tabs are rejected before the dedent break for the same
+                // reason as above: a tab-indented property line otherwise
+                // reads as a dedent and ends the property block silently.
+                if pstripped != "--" {
+                    check_no_tab_indent(pline, pos + 1)?;
+                }
                 // Anything at or below this variable's indent ends its properties
                 if pindent <= indent {
                     break;
                 }
-                check_no_tab_indent(pline, pos + 1)?;
                 if pindent != indent + 2 {
                     return Err(PromptParseError::IndentationError {
                         line: pos + 1,
@@ -1007,13 +1021,15 @@ impl PromptParser {
                                     p += 1;
                                     continue;
                                 }
+                                if istripped != "--" {
+                                    check_no_tab_indent(iline, p + 1)?;
+                                }
                                 if iindent != indent + 4 {
                                     break;
                                 }
                                 if !(istripped.starts_with("- ") || istripped == "-") {
                                     break;
                                 }
-                                check_no_tab_indent(iline, p + 1)?;
                                 let item_val = istripped
                                     .strip_prefix('-')
                                     .map(|s| s.trim())
@@ -1056,13 +1072,15 @@ impl PromptParser {
                                     pos += 1;
                                     continue;
                                 }
+                                if istripped != "--" {
+                                    check_no_tab_indent(iline, pos + 1)?;
+                                }
                                 if iindent != indent + 4 {
                                     break;
                                 }
                                 if !(istripped.starts_with("- ") || istripped == "-") {
                                     break;
                                 }
-                                check_no_tab_indent(iline, pos + 1)?;
                                 let item_val = istripped
                                     .strip_prefix('-')
                                     .map(|s| s.trim())

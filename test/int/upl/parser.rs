@@ -1220,6 +1220,32 @@ fn test_tab_indentation_is_error() {
     assert!(matches!(res, Err(PromptParseError::TabIndentation { .. })), "{:?}", res);
 }
 
+#[test]
+fn test_tab_indentation_narrower_than_expected_is_error() {
+    // A tab counts as one column, so a tab-indented line usually lands at a
+    // *lower* indent than the block expects. The dedent must not end the
+    // block silently (swallowing the rest of `params` into the body); it is
+    // still an RFC §2 violation and must be reported as one.
+    let cases = [
+        // one tab where a 2-space param declaration is expected
+        "--\nname: p\nparams:\n\tx:\n\t\ttype: string\n--\n[[[X]]]\n",
+        // one tab where a 4-space property line is expected
+        "--\nname: p\nparams:\n  x:\n\ttype: string\n--\n[[[X]]]\n",
+        // one tab where an 8-space block-list item is expected
+        "--\nname: p\nparams:\n  xs:\n    type: list\n    etype: string\n    def:\n\t- \"a\"\n--\n[[[XS]]]\n",
+        // one tab where an 8-space opts item is expected
+        "--\nname: p\nparams:\n  o:\n    type: option_single\n    opts:\n\t- \"a\"\n\t- \"b\"\n--\n[[[O]]]\n",
+    ];
+    for content in cases {
+        let res = PromptParser::parse(content);
+        assert!(
+            matches!(res, Err(PromptParseError::TabIndentation { .. })),
+            "{:?}",
+            res
+        );
+    }
+}
+
 // --- `type` is required (RFC §3) ---
 
 #[test]
