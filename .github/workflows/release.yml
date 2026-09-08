@@ -222,31 +222,47 @@ jobs:
 
       # `uses:` cannot take an expression, so the three VM providers are
       # separate steps selected by the matrix rather than one parameterized
-      # step. Each installs a Rust toolchain from that BSD's package manager
-      # (plus cmake/perl, which the aws-lc-rs crypto backend needs to build).
+      # step. Each installs a Rust toolchain with that BSD's own package
+      # command — they are all different, and each is the one its vmactions
+      # image documents — plus cmake (and perl where it is not in base),
+      # which the aws-lc-rs crypto backend needs to build.
+      #
+      # `run` scripts execute over a non-login sh, which does not necessarily
+      # source the profile that puts the package prefix on PATH, so each one
+      # prepends its own prefix before invoking cargo.
       - name: Build (FreeBSD VM)
         if: matrix.os_name == 'freebsd'
         uses: vmactions/freebsd-vm@v1
         with:
           copyback: true
           prepare: pkg install -y rust cmake perl5
-          run: cargo build --release --locked
+          run: |
+            export PATH=/usr/local/bin:$PATH
+            cargo build --release --locked
 
       - name: Build (OpenBSD VM)
         if: matrix.os_name == 'openbsd'
         uses: vmactions/openbsd-vm@v1
         with:
           copyback: true
+          # -I keeps pkg_add from waiting on input if a name is ambiguous.
           prepare: pkg_add -I rust cmake
-          run: cargo build --release --locked
+          run: |
+            export PATH=/usr/local/bin:$PATH
+            cargo build --release --locked
 
       - name: Build (NetBSD VM)
         if: matrix.os_name == 'netbsd'
         uses: vmactions/netbsd-vm@v1
         with:
           copyback: true
-          prepare: /usr/pkg/bin/pkgin -y install rust cmake perl
-          run: cargo build --release --locked
+          # pkgin is not present on this image; pkg_add in base is the
+          # installer the netbsd-vm action documents. perl is not in NetBSD
+          # base, so it comes from pkgsrc here.
+          prepare: /usr/sbin/pkg_add -u rust cmake perl
+          run: |
+            export PATH=/usr/pkg/bin:$PATH
+            cargo build --release --locked
 
       # Same layout as the other platforms: one top-level directory holding
       # the binary and upl-spec/upl-1.0-rfc.pdf. The BSD builds are native, so
