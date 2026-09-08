@@ -16,7 +16,7 @@ ifneq ($(SUDO_USER),)
 CARGO := sudo -u $(SUDO_USER) bash -lc 'exec cargo "$$@"' _
 endif
 
-.PHONY: build test release clean generate_upl_rfc install uninstall
+.PHONY: build test release clean doc install uninstall
 
 build:
 	$(CARGO) build
@@ -31,8 +31,19 @@ clean:
 	$(CARGO) clean
 	rm -f upl-spec/*.pdf
 
+# Render the spec to PDF. Needs Node on PATH: mdpdf pulls in Puppeteer, which
+# downloads a headless Chrome into ~/.cache/puppeteer (~600 MB) the first time.
+# If that download is ever interrupted it leaves an empty version folder behind
+# and every later run fails with "the browser folder exists but the executable
+# is missing" — delete the empty folder to let it download again.
+# The version is pinned so the rendered PDF stays reproducible, and --yes stops
+# npx from prompting when the package is not in the npx cache yet.
+MDPDF_VERSION ?= 3.1.0
+
 doc:
-	npx mdpdf upl-spec/upl-1.0-rfc.md \
+	@command -v npx >/dev/null 2>&1 || { \
+	  echo "make doc needs Node.js: 'npx' was not found on PATH" >&2; exit 1; }
+	npx --yes mdpdf@$(MDPDF_VERSION) upl-spec/upl-1.0-rfc.md \
 	  --output upl-spec/upl-1.0-rfc.pdf \
 	  --css "body{font-family:'Times New Roman', 'Nimbus Roman Regular', serif}"
 

@@ -1,9 +1,13 @@
-# UPL — Universal Prompt Language
+# UPL — Universal Prompt Language specification
 
-* **Version:** 1.0-rc.5
-* **Status:** Release Candidate
+* **Version:** 1.0
+* **Status:** Production release
 * **File Extension:** `.txt` or `.upl`
-
+* **Changelog:**
+```
+- 08-09-2026 - v1.0 published - David Valin <hola@davidvalin.com>
+- 10-08-2026 - v1.0 draft published - David Valin <hola@davidvalin.com>
+```
 ---
 
 ## 1. Overview
