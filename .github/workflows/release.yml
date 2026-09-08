@@ -16,6 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       ok: ${{ steps.check.outputs.ok }}
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -28,10 +29,41 @@ jobs:
             echo "Tag $GITHUB_REF is not reachable from master. Skipping release." >&2
             echo "ok=false" >> "$GITHUB_OUTPUT"
           fi
+      # The release version is the tag name (tags in this repo are bare
+      # versions, e.g. `0.1.1`); a leading `v` is stripped if one is ever
+      # used. Resolved once here so every matrix leg names its archive
+      # identically.
+      - id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+  docs:
+    name: Render spec PDF
+    needs: guard
+    if: needs.guard.outputs.ok == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # `make doc` runs mdpdf, which pulls in Puppeteer and downloads a
+      # headless Chrome. Rendering once here and sharing the result keeps
+      # that download out of all eight build legs.
+      - name: Render spec to PDF
+        run: make doc
+
+      - name: Upload spec PDF
+        uses: actions/upload-artifact@v4
+        with:
+          name: spec-pdf
+          path: upl-spec/upl-1.0-rfc.pdf
+          if-no-files-found: error
 
   build:
     name: Build (${{ matrix.target }})
-    needs: guard
+    needs: [guard, docs]
     if: needs.guard.outputs.ok == 'true'
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -42,41 +74,57 @@ jobs:
           # Linux glibc
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-latest
-            artifact: upl-x86_64_linux
+            os_name: linux
+            arch: x86_64
             use_cross: false
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-latest
-            artifact: upl-aarch64_linux
+            os_name: linux
+            arch: aarch64
             use_cross: true
           # Linux musl (static)
           - target: x86_64-unknown-linux-musl
             runner: ubuntu-latest
-            artifact: upl-x86_64_linux_musl
+            os_name: linux-musl
+            arch: x86_64
             use_cross: true
           - target: aarch64-unknown-linux-musl
             runner: ubuntu-latest
-            artifact: upl-aarch64_linux_musl
+            os_name: linux-musl
+            arch: aarch64
             use_cross: true
           # macOS
           - target: x86_64-apple-darwin
             runner: macos-14
-            artifact: upl-x86_64_macos-intel
+            os_name: macos
+            arch: x86_64
             use_cross: false
           - target: aarch64-apple-darwin
             runner: macos-14
-            artifact: upl-aarch64_macos
+            os_name: macos
+            arch: aarch64
             use_cross: false
           # Windows
           - target: x86_64-pc-windows-msvc
             runner: windows-latest
-            artifact: upl-x86_64_windows
+            os_name: windows
+            arch: x86_64
             use_cross: false
           - target: aarch64-pc-windows-msvc
             runner: windows-11-arm
-            artifact: upl-aarch64_windows
+            os_name: windows
+            arch: aarch64
             use_cross: false
     steps:
       - uses: actions/checkout@v4
+
+      # Archive stem: upl-<version>-<os>-<arch>. Computed with bash on every
+      # runner (Git Bash on Windows) so the name is derived in exactly one
+      # place for all platforms.
+      - name: Compute archive name
+        shell: bash
+        run: |
+          echo "ARCHIVE_NAME=upl-${{ needs.guard.outputs.version }}-${{ matrix.os_name }}-${{ matrix.arch }}" >> "$GITHUB_ENV"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -97,40 +145,147 @@ jobs:
         if: matrix.use_cross == false
         run: cargo build --release --locked --target ${{ matrix.target }}
 
+      # The spec PDF rendered by the `docs` job, restored to the path it
+      # occupies in the repo so it is staged from one place below.
+      - name: Download spec PDF
+        uses: actions/download-artifact@v4
+        with:
+          name: spec-pdf
+          path: upl-spec
+
+      # Each archive holds a single top-level directory named after the
+      # archive itself, containing the binary and upl-spec/upl-1.0-rfc.pdf,
+      # so extracting never scatters files into the current directory.
       - name: Archive artifact (unix)
         if: runner.os != 'Windows'
         run: |
-          mkdir -p staging
-          cp target/${{ matrix.target }}/release/upl staging/upl
-          chmod +x staging/upl
-          tar -czf "${{ matrix.artifact }}.tar.gz" -C staging upl
+          mkdir -p "staging/$ARCHIVE_NAME/upl-spec"
+          cp target/${{ matrix.target }}/release/upl "staging/$ARCHIVE_NAME/upl"
+          chmod +x "staging/$ARCHIVE_NAME/upl"
+          cp upl-spec/upl-1.0-rfc.pdf "staging/$ARCHIVE_NAME/upl-spec/upl-1.0-rfc.pdf"
+          tar -czf "$ARCHIVE_NAME.tar.gz" -C staging "$ARCHIVE_NAME"
 
       - name: Archive artifact (windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path staging | Out-Null
-          Copy-Item "target/${{ matrix.target }}/release/upl.exe" "staging/upl.exe"
-          Compress-Archive -Path "staging/upl.exe" -DestinationPath "${{ matrix.artifact }}.zip" -Force
+          $name = $env:ARCHIVE_NAME
+          New-Item -ItemType Directory -Force -Path "staging/$name/upl-spec" | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/upl.exe" "staging/$name/upl.exe"
+          Copy-Item "upl-spec/upl-1.0-rfc.pdf" "staging/$name/upl-spec/upl-1.0-rfc.pdf"
+          Compress-Archive -Path "staging/$name" -DestinationPath "$name.zip" -Force
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
+          name: ${{ env.ARCHIVE_NAME }}
           path: |
-            ${{ matrix.artifact }}.tar.gz
-            ${{ matrix.artifact }}.zip
+            ${{ env.ARCHIVE_NAME }}.tar.gz
+            ${{ env.ARCHIVE_NAME }}.zip
+
+  # GitHub hosts no BSD runners, and OpenBSD/NetBSD are Rust tier-3 targets
+  # (rustup ships no prebuilt std for them), so cross-compiling is not an
+  # option for all three. Each build therefore runs natively inside a real BSD
+  # VM booted on the Linux runner; the workspace is synced in, and `copyback`
+  # brings `target/release/upl` back out for packaging on the runner side.
+  build-bsd:
+    name: Build (${{ matrix.os_name }})
+    needs: [guard, docs]
+    if: needs.guard.outputs.ok == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      # Matches the concurrency the native `build` job limits itself to.
+      max-parallel: 2
+      matrix:
+        include:
+          - os_name: freebsd
+            arch: x86_64
+          - os_name: openbsd
+            arch: x86_64
+          - os_name: netbsd
+            arch: x86_64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute archive name
+        shell: bash
+        run: |
+          echo "ARCHIVE_NAME=upl-${{ needs.guard.outputs.version }}-${{ matrix.os_name }}-${{ matrix.arch }}" >> "$GITHUB_ENV"
+
+      - name: Download spec PDF
+        uses: actions/download-artifact@v4
+        with:
+          name: spec-pdf
+          path: upl-spec
+
+      # `uses:` cannot take an expression, so the three VM providers are
+      # separate steps selected by the matrix rather than one parameterized
+      # step. Each installs a Rust toolchain from that BSD's package manager
+      # (plus cmake/perl, which the aws-lc-rs crypto backend needs to build).
+      - name: Build (FreeBSD VM)
+        if: matrix.os_name == 'freebsd'
+        uses: vmactions/freebsd-vm@v1
+        with:
+          copyback: true
+          prepare: pkg install -y rust cmake perl5
+          run: cargo build --release --locked
+
+      - name: Build (OpenBSD VM)
+        if: matrix.os_name == 'openbsd'
+        uses: vmactions/openbsd-vm@v1
+        with:
+          copyback: true
+          prepare: pkg_add -I rust cmake
+          run: cargo build --release --locked
+
+      - name: Build (NetBSD VM)
+        if: matrix.os_name == 'netbsd'
+        uses: vmactions/netbsd-vm@v1
+        with:
+          copyback: true
+          prepare: /usr/pkg/bin/pkgin -y install rust cmake perl
+          run: cargo build --release --locked
+
+      # Same layout as the other platforms: one top-level directory holding
+      # the binary and upl-spec/upl-1.0-rfc.pdf. The BSD builds are native, so
+      # the binary is at target/release/ rather than under a target triple.
+      - name: Archive artifact
+        run: |
+          mkdir -p "staging/$ARCHIVE_NAME/upl-spec"
+          cp target/release/upl "staging/$ARCHIVE_NAME/upl"
+          chmod +x "staging/$ARCHIVE_NAME/upl"
+          cp upl-spec/upl-1.0-rfc.pdf "staging/$ARCHIVE_NAME/upl-spec/upl-1.0-rfc.pdf"
+          tar -czf "$ARCHIVE_NAME.tar.gz" -C staging "$ARCHIVE_NAME"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARCHIVE_NAME }}
+          path: ${{ env.ARCHIVE_NAME }}.tar.gz
+          if-no-files-found: error
 
   release:
     name: Create release & upload assets
-    needs: [guard, build]
-    if: always() && needs.guard.result == 'success'
+    needs: [guard, build, build-bsd]
+    # `always()` still publishes whatever managed to build when some matrix
+    # legs fail (fail-fast is off). It must not publish an empty release when
+    # the build stage never ran at all, though — because the tag was not on
+    # master, or because the `docs` job failed and took `build` down with it.
+    # `build-bsd` is deliberately absent from this condition: those legs are
+    # best-effort, so a BSD failure still ships the other platforms' assets.
+    if: >-
+      always()
+      && needs.guard.outputs.ok == 'true'
+      && (needs.build.result == 'success' || needs.build.result == 'failure')
     runs-on: ubuntu-latest
     steps:
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
         with:
           path: assets
+          pattern: upl-*
           merge-multiple: true
 
       - name: Create release and upload assets
